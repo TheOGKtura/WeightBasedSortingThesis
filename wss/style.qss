@@ -1,0 +1,92 @@
+/* === MAIN BACKGROUND === */
+QStackedWidget {
+    background-color: qlineargradient(
+        spread:pad,
+        x1:0, y1:0,
+        x2:1, y2:1,
+        stop:0 #0d0d0d,
+        stop:1 #1a1a1a
+    );
+}
+
+/* === LABELS === */
+QLabel {
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+}
+
+/* === TEXT BROWSER === */
+QTextBrowser#textProductDescription {
+    background-color: #121212;
+    color: white;
+    border: 5px solid #333;
+    border-radius: 12px;
+    padding: 6px;
+}
+
+/* === BUTTONS === */
+QPushButton {
+    background-color: #2c3e50;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #34495e;
+}
+
+QPushButton:pressed {
+    background-color: #1abc9c;
+}
+
+QPushButton:disabled {
+    background-color: #555;
+    color: #888;
+}
+
+QPushButton#startButton,
+QPushButton#pauseButton,
+QPushButton#parametersButton,
+QPushButton#settingsButton {
+    min-width: 160px;
+    max-width: 160px;
+    min-height: 80px;
+    max-height: 80px;
+}
+/* === STATUS LABELS === */
+#label_StatusState {
+    color: #1abc9c;
+    font-weight: bold;
+}
+
+/* === CAMERA FEED === */
+#CameraFeed {
+    background-color: black;
+    border: 2px solid #333;
+}
+
+/* === PANEL === */
+#Panel {
+    background-color: #181818;
+    border-right: 2px solid #333;
+}
+
+QLineEdit {
+    border: 2px solid #ccc;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 14px;
+    background-color: #fdfdfd;
+}
+QLineEdit:focus {
+    border: 2px solid #4CAF50;
+    background-color: #ffffff;
+}
+QScrollArea {
+    border: none;
+    background-color: #fafafa;
+}
