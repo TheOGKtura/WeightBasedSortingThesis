@@ -5,7 +5,7 @@ import sys, os, time
 #import subprocess # <-- for onscreen keyboard, pero di pa installed sa apt packages ng raspi
 #from picamera2 import Picamera2
 import numpy as np
-
+import cv2
 #   --->    Wala pang FireBase Connection :(    <--
 
 #>>Parameters Page
@@ -411,13 +411,44 @@ class Ui_MainWindow(object):
         #<-- I have no Idea what is this
         MainWindow.setCentralWidget(self.centralwidget)
         self.stackedWidget.setCurrentIndex(0)
-
+        self.setup_statistics_dashboard()
 
 
 
 #       <<<---      Functions       --->>>
 
     #Main Page Functions
+
+        self.capture = None
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_frame)
+
+
+    # === CAMERA FUNCTIONS ===
+    def start_camera(self):
+        self.capture = cv2.VideoCapture(0)
+        if not self.capture.isOpened():
+            print("Camera not accessible!")
+            return
+        self.timer.start(30)
+        print("Camera started")
+
+    def update_frame(self):
+        ret, frame = self.capture.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            image = QtGui.QImage(frame, frame.shape[1], frame.shape[0], QtGui.QImage.Format_RGB888)
+            pixmap = QtGui.QPixmap.fromImage(image)
+            self.CameraFeed.setPixmap(pixmap)
+
+    def stop_camera(self):
+        if self.timer.isActive():
+            self.timer.stop()
+            if self.capture:
+                self.capture.release()
+            self.CameraFeed.clear()
+            print("Camera stopped")
+
         '''
         self.picam2 = None
         self.timer = QtCore.QTimer()
@@ -434,9 +465,9 @@ class Ui_MainWindow(object):
             self.picam2.configure(config)
             self.picam2.start()
             self.timer.start(30)
-            print("✅ PiCamera2 started successfully")
+            print(" PiCamera2 started successfully")
         except Exception as e:
-            print("❌ Error starting PiCamera2:", e)
+            print(" Error starting PiCamera2:", e)
 
     def update_frame(self):
         if hasattr(self, 'picam2') and self.picam2:
@@ -577,6 +608,66 @@ class Ui_MainWindow(object):
 
 
     #Statistic Function
+
+    # --- STATISTICS PAGE DASHBOARD ---
+    def setup_statistics_dashboard(self):
+        # Background frame
+        self.stats_frame = QtWidgets.QFrame(self.statistics)
+        self.stats_frame.setGeometry(10, 80, 780, 380)
+        self.stats_frame.setStyleSheet("background-color: #2C3E50; border-radius: 10px;")
+        
+        # Summary Cards
+        self.card_approved = QtWidgets.QLabel("Approved: 0", self.stats_frame)
+        self.card_approved.setGeometry(20, 10, 150, 40)
+        self.card_approved.setStyleSheet("background-color: #27AE60; color: white; font-weight: bold; border-radius: 8px;")
+        self.card_approved.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.card_rejected = QtWidgets.QLabel("Rejected: 0", self.stats_frame)
+        self.card_rejected.setGeometry(200, 10, 150, 40)
+        self.card_rejected.setStyleSheet("background-color: #E74C3C; color: white; font-weight: bold; border-radius: 8px;")
+        self.card_rejected.setAlignment(QtCore.Qt.AlignCenter)
+
+        # PyQtGraph Plot Widget
+        self.stats_plot = pg.PlotWidget(self.stats_frame)
+        self.stats_plot.setGeometry(20, 60, 740, 300)
+        self.stats_plot.setBackground("#34495E")
+        
+        # X-axis: Days
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        self.stats_plot.getPlotItem().getAxis('bottom').setTicks([list(enumerate(days))])
+
+        # Y-axis: Quantity
+        self.stats_plot.setLabel('left', 'Quantity')
+        self.stats_plot.setLabel('bottom', 'Day')
+        self.stats_plot.showGrid(x=True, y=True, alpha=0.3)
+
+        # Lines for Accepted and Rejected
+        self.accepted_line = self.stats_plot.plot([], [], pen=pg.mkPen(color="#27AE60", width=3), symbol='o', symbolSize=8, name="Accepted")
+        self.rejected_line = self.stats_plot.plot([], [], pen=pg.mkPen(color="#E74C3C", width=3), symbol='x', symbolSize=8, name="Rejected")
+
+        # Toggle checkboxes
+        self.checkbox_accepted = QtWidgets.QCheckBox("Show Accepted", self.stats_frame)
+        self.checkbox_accepted.setGeometry(400, 10, 120, 30)
+        self.checkbox_accepted.setChecked(True)
+        self.checkbox_accepted.stateChanged.connect(lambda: self.accepted_line.setVisible(self.checkbox_accepted.isChecked()))
+
+        self.checkbox_rejected = QtWidgets.QCheckBox("Show Rejected", self.stats_frame)
+        self.checkbox_rejected.setGeometry(530, 10, 120, 30)
+        self.checkbox_rejected.setChecked(True)
+        self.checkbox_rejected.stateChanged.connect(lambda: self.rejected_line.setVisible(self.checkbox_rejected.isChecked()))
+
+        # Example static data (replace later with your weight sensor data)
+        x = np.arange(7)  # Days
+        accepted = np.random.randint(5, 20, size=7)
+        rejected = np.random.randint(0, 5, size=7)
+
+        self.update_statistics_plot(x, accepted, rejected)
+
+    def update_statistics_plot(self, x, accepted, rejected):
+        self.accepted_line.setData(x, accepted)
+        self.rejected_line.setData(x, rejected)
+        self.card_approved.setText(f"Approved: {sum(accepted)}")
+        self.card_rejected.setText(f"Rejected: {sum(rejected)}")
 
 
 if __name__ == "__main__":
