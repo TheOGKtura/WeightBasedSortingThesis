@@ -90,3 +90,53 @@ QScrollArea {
     border: none;
     background-color: transparent;
 }
+/* === Settings Page === */
+#datetimeLabel, #uptimeLabel {
+    color: #E0E0E0;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 6px;
+}
+
+#exitButton {
+    background-color: #d32f2f;
+    color: white;
+    font-weight: bold;
+    border-radius: 12px;
+    padding: 10px;
+}
+
+#exitButton:hover {
+    background-color: #b71c1c;
+}
+
+/* === Exit Dialog === */
+#exitDialog {
+    background-color: #2E2E2E;
+    border: 2px solid #1ABC9C;
+    border-radius: 15px;
+}
+
+#passwordPrompt {
+    color: #E0E0E0;
+    font-size: 16px;
+}
+
+#passwordInput {
+    background-color: #1E1E1E;
+    color: white;
+    border: 1px solid #1ABC9C;
+    border-radius: 6px;
+    padding: 6px;
+}
+
+#passwordButtons QPushButton {
+    background-color: #1ABC9C;
+    color: white;
+    border-radius: 6px;
+    padding: 6px 12px;
+}
+
+#passwordButtons QPushButton:hover {
+    background-color: #16A085;
+}

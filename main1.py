@@ -1,8 +1,7 @@
 from PySide6 import QtCore, QtGui, QtWidgets
 #import cv2 #for pc testing usb cam
-import sys
-import os 
-import subprocess # <-- not installed ung onbard dunno if practical sa liit ng screen
+import sys, os, time
+#import subprocess # <-- not installed ung onbard dunno if practical sa liit ng screen
 #from picamera2 import Picamera2
 import numpy as np
 
@@ -19,6 +18,8 @@ class CardWidget(QtWidgets.QFrame):
         self.setFixedSize(200, 250)
         self.setFrameShape(QtWidgets.QFrame.StyledPanel)
         self.setFrameShadow(QtWidgets.QFrame.Raised)
+        self.setToolTip("Double-tap to select this item")
+
         # Modern grey-blue card style
         self.setStyleSheet("""
             QFrame {
@@ -66,10 +67,12 @@ class CardWidget(QtWidgets.QFrame):
         desc_label.setStyleSheet("color: #BDC3C7; font-size: 12px;")
         layout.addWidget(desc_label)
 
-    def mousePressEvent(self, event):
-        """Touch and click support"""
-        self.clicked.emit(self.title, self.description, self.weight)
-        super().mousePressEvent(event)
+    def mouseDoubleClickEvent(self, event):
+        """Double-tap or double-click to activate"""
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit(self.title, self.description, self.weight)
+        super().mouseDoubleClickEvent(event)
+
 
 
 #eto ung kapag tinouch search bar lalabas ung keyboard
@@ -117,6 +120,8 @@ class Ui_MainWindow(object):
         MainWindow.resize(800, 480)
         MainWindow.setMinimumSize(QtCore.QSize(800, 480))
         MainWindow.setMaximumSize(QtCore.QSize(800, 480))
+
+
 
         self.centralwidget = QtWidgets.QWidget(MainWindow)
         self.stackedWidget = QtWidgets.QStackedWidget(self.centralwidget)
@@ -289,10 +294,10 @@ class Ui_MainWindow(object):
         images_path = os.path.join(base_path, "images")
 
         self.items = [
-            {"title": "Okuu", "desc": "Highly Radioactive", "image": os.path.join(images_path, "okuu1.jpg"), "weight": 250.0},
-            {"title": "Utsohu", "desc": "Nuclearly Cute", "image": os.path.join(images_path, "okuu2.jpg"), "weight": 500.0},
-            {"title": "Nuke", "desc": "Radiant Sun of Happiness", "image": os.path.join(images_path, "okuu3.jpg"), "weight": 750.0},
-            {"title": "Jayrill", "desc": "Rising Red", "image": os.path.join(images_path, "jay.jpg"), "weight": 999},
+            {"title": "CDO", "desc": "Chicken Nuggets", "image": os.path.join(images_path, "CDO - CHICKEN NUGGETS.png"), "weight": 200.0},
+            {"title": "CDO FUNTASTYK", "desc": "Young Pork Tocino", "image": os.path.join(images_path, "CDO FUNTASTYK - YOUNG PORK.png"), "weight": 450.0},
+            {"title": "CDO IDOL", "desc": "Cheesedog Jumbo", "image": os.path.join(images_path, "CDO IDOL - CHEESEDOG - JUMBO.png"), "weight": 1000},
+            {"title": "CDO", "desc": "Crispy Burger", "image": os.path.join(images_path, "CDO-Crispy Burger.png"), "weight": 228},
         ]
 
   
@@ -316,6 +321,25 @@ class Ui_MainWindow(object):
         self.buttonReturnSettings.clicked.connect(lambda: self.stackedWidget.setCurrentIndex(0))
         self.stackedWidget.addWidget(self.settings)
 
+        # === UPTIME TRACKER ===
+        self.start_time = time.time()
+        self.uptime_timer = QtCore.QTimer()
+        self.uptime_timer.timeout.connect(self.update_uptime)
+        self.uptime_timer.start(1000)
+
+
+        # Uptime Label
+        self.label_uptime = QtWidgets.QLabel("Uptime: 00:00:00", self.settings)
+        self.label_uptime.setGeometry(40, 40, 300, 50)
+        self.label_uptime.setFont(QtGui.QFont("Arial", 14))
+        self.label_uptime.setStyleSheet("color: white;")
+
+        # Date and Time Display
+        self.label_datetime = QtWidgets.QLabel(self.settings)
+        self.label_datetime.setGeometry(20, 20, 400, 40)
+        self.label_datetime.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
+        self.label_datetime.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+
         # === STATISTICS PAGE ===
         self.statistics = QtWidgets.QWidget()
         self.buttonReturnStatistics = QtWidgets.QPushButton("RETURN", self.statistics)
@@ -325,12 +349,6 @@ class Ui_MainWindow(object):
 
         MainWindow.setCentralWidget(self.centralwidget)
         self.stackedWidget.setCurrentIndex(0)
-    
-    '''
-        self.picam2 = None
-        self.timer = QtCore.QTimer()
-        self.timer.timeout.connect(self.update_frame)
-    '''
 
     def display_product_info(self, title, description, weight):
         """Updates product description and threshold weight."""
@@ -339,7 +357,11 @@ class Ui_MainWindow(object):
         self.label_thresholdunit.setText("g")           # optional: use grams
         self.stackedWidget.setCurrentIndex(0)           # return to main page
 
-
+    '''
+        self.picam2 = None
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_frame)
+    '''
     '''
     # === CAMERA FUNCTIONS ===
     def start_camera(self):
@@ -456,6 +478,25 @@ class Ui_MainWindow(object):
             else:
                 self.card_widgets[i].hide()
 
+
+    #Uptime Timer
+
+    def update_uptime(self):
+        # Compute uptime
+        elapsed_seconds = int(time.time() - self.start_time)
+        hours, remainder = divmod(elapsed_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"Uptime: {hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        # Get current system date & time
+        now = QtCore.QDateTime.currentDateTime()
+        datetime_str = now.toString("yyyy-MM-dd   hh:mm:ss AP")
+
+        # Update both labels
+        self.label_datetime.setText(datetime_str)
+        self.label_uptime.setText(uptime_str)
+
+
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     MainWindow = QtWidgets.QMainWindow()
@@ -468,5 +509,8 @@ if __name__ == "__main__":
         print("style.qss no within directory")
     ui = Ui_MainWindow()
     ui.setupUi(MainWindow)
-    MainWindow.show()
+    
+    MainWindow.setWindowFlags(QtCore.Qt.FramelessWindowHint)
+    MainWindow.setFixedSize(800, 480) # <-- self.setWindowFlags(QtCore.Qt.FramelessWindowHint) if raspi
+    MainWindow.show() #<-- change to self.showFullScreen() if raspi
     sys.exit(app.exec())
