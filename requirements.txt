@@ -1,6 +1,7 @@
-numpy==2.2.6
-opencv-python==4.12.0.88
-PyQt5==5.15.11
-PyQt5-Qt5==5.15.2
-PyQt5_sip==12.17.1
-PyQt5Designer==5.14.1
+pip install numpy==2.2.6
+pip install opencv-python==4.12.0.88
+pip install pyqtgraph==0.13.7
+pip install PySide6==6.10.0
+pip install PySide6-Addons==6.10.0
+pip install PySide6-Essentials==6.10.0
+pip install shiboken6==6.10.0

@@ -1,5 +1,6 @@
 #Solely Frontend withouth BackEnd connections
 from PySide6 import QtCore, QtGui, QtWidgets
+import pyqtgraph as pg
 import sys, os, time
 #import subprocess # <-- for onscreen keyboard, pero di pa installed sa apt packages ng raspi
 #from picamera2 import Picamera2
@@ -205,9 +206,9 @@ class Ui_MainWindow(object):
         self.CameraFeed.setAlignment(QtCore.Qt.AlignCenter)
 
         #<-- Outcome ng Object Detection ng Camera <-- Accepted <-- Rejeected <-- Others
-        self.cameradunno = QtWidgets.QLabel("jayrill po", self.Overview)
-        self.cameradunno.setGeometry(100, 20, 471, 41)
-        self.cameradunno.setAlignment(QtCore.Qt.AlignCenter)
+        self.camera_outcome = QtWidgets.QLabel("-", self.Overview)
+        self.camera_outcome.setGeometry(100, 20, 471, 41)
+        self.camera_outcome.setAlignment(QtCore.Qt.AlignCenter)
 
         # === DATE & TIME DISPLAY on Main Page ===
         self.label_datetime_main = QtWidgets.QLabel(self.Overview)
@@ -316,10 +317,10 @@ class Ui_MainWindow(object):
         images_path = os.path.join(base_path, "images")
 
         self.items = [
-            {"title": "CDO", "desc": "Chicken Nuggets", "image": os.path.join(images_path, "CDO - CHICKEN NUGGETS.png"), "weight": 200.0},
-            {"title": "CDO FUNTASTYK", "desc": "Young Pork Tocino", "image": os.path.join(images_path, "CDO FUNTASTYK - YOUNG PORK.png"), "weight": 450.0},
-            {"title": "CDO IDOL", "desc": "Cheesedog Jumbo", "image": os.path.join(images_path, "CDO IDOL - CHEESEDOG - JUMBO.png"), "weight": 1000},
-            {"title": "CDO", "desc": "Crispy Burger", "image": os.path.join(images_path, "CDO-Crispy Burger.png"), "weight": 228},
+            {"title": "CDO", "desc": "Chicken Nuggets - 200 grams", "image": os.path.join(images_path, "CDO - CHICKEN NUGGETS.png"), "weight": 200.0},
+            {"title": "CDO FUNTASTYK", "desc": "Young Pork Tocino - 450 grams", "image": os.path.join(images_path, "CDO FUNTASTYK - YOUNG PORK.png"), "weight": 450.0},
+            {"title": "CDO IDOL", "desc": "Cheesedog Jumbo - 1 kg", "image": os.path.join(images_path, "CDO IDOL - CHEESEDOG - JUMBO.png"), "weight": 1000},
+            {"title": "CDO", "desc": "Crispy Burger - 228 grams", "image": os.path.join(images_path, "CDO-Crispy Burger.png"), "weight": 228},
         ]
 
         # --- Create Card Widgets ---
@@ -346,7 +347,7 @@ class Ui_MainWindow(object):
 
 
         self.buttonExit = QtWidgets.QPushButton("EXIT PROGRAM", self.settings)
-        self.buttonExit.setGeometry(50, 400, 130, 60)
+        self.buttonExit.setGeometry(650, 390, 130, 60)
         self.buttonExit.clicked.connect(self.show_exit_popup)
         
         # === POPUP OVERLAY ===
@@ -410,6 +411,9 @@ class Ui_MainWindow(object):
         #<-- I have no Idea what is this
         MainWindow.setCentralWidget(self.centralwidget)
         self.stackedWidget.setCurrentIndex(0)
+
+
+
 
 #       <<<---      Functions       --->>>
 
@@ -571,6 +575,8 @@ class Ui_MainWindow(object):
     def show_exit_popup(self):
         self.popup.show()
 
+
+    #Statistic Function
 
 
 if __name__ == "__main__":
