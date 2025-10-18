@@ -192,7 +192,7 @@ class Ui_MainWindow(object):
         self.CameraFeed.setGeometry(30, 80, 471, 271)
         self.CameraFeed.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.cameradunno = QtWidgets.QLabel("=Output [Approved][Rejected][etc]", self.Overview)
+        self.cameradunno = QtWidgets.QLabel(" ", self.Overview)
         self.cameradunno.setGeometry(30, 20, 471, 41)
         self.cameradunno.setAlignment(QtCore.Qt.AlignCenter)
 
@@ -322,7 +322,7 @@ class Ui_MainWindow(object):
         self.stackedWidget.addWidget(self.settings)
 
 
-        self.buttonExit = QtWidgets.QPushButton("Exit Program", self.settings)
+        self.buttonExit = QtWidgets.QPushButton("EXIT PROGRAM", self.settings)
         self.buttonExit.setGeometry(50, 400, 120, 50)
         self.buttonExit.clicked.connect(self.show_exit_popup)
         
@@ -444,6 +444,8 @@ class Ui_MainWindow(object):
     #picamera2 module
     
     '''
+
+    
     # === BUTTON FUNCTIONS ===
     def toggle_process(self, checked):
         """Start/Stop toggle behavior."""
