@@ -90,53 +90,71 @@ QScrollArea {
     border: none;
     background-color: transparent;
 }
-/* === Settings Page === */
-#datetimeLabel, #uptimeLabel {
-    color: #E0E0E0;
-    font-size: 18px;
-    font-weight: bold;
-    padding: 6px;
+/* ===== SETTINGS PAGE BUTTONS ===== */
+#buttonReturnSettings {
+    background-color: #2ecc71;
+    color: white;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 2px solid #27ae60;
 }
 
-#exitButton {
-    background-color: #d32f2f;
+#buttonExit {
+    background-color: #e74c3c;
+    color: white;
+    font-size: 16px;
+    border-radius: 10px;
+    border: 2px solid #c0392b;
+}
+
+/* ===== UPTIME LABEL ===== */
+#uptimeLabel {
+    font-size: 16px;
     color: white;
     font-weight: bold;
-    border-radius: 12px;
-    padding: 10px;
 }
 
-#exitButton:hover {
-    background-color: #b71c1c;
+/* ===== POPUP OVERLAY ===== */
+#popupOverlay {
+    background-color: rgba(0, 0, 0, 150);
 }
 
-/* === Exit Dialog === */
-#exitDialog {
-    background-color: #2E2E2E;
-    border: 2px solid #1ABC9C;
+/* ===== POPUP BOX ===== */
+#popupBox {
+    background-color: #333;
+    border: 2px solid #999;
     border-radius: 15px;
 }
 
-#passwordPrompt {
-    color: #E0E0E0;
+/* ===== POPUP TEXT ===== */
+#labelPopup {
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+/* ===== POPUP BUTTONS ===== */
+#yesBtn {
+    background-color: #c0392b;
+    color: white;
     font-size: 16px;
+    border-radius: 10px;
+    border: none;
 }
 
-#passwordInput {
-    background-color: #1E1E1E;
+#noBtn {
+    background-color: #27ae60;
     color: white;
-    border: 1px solid #1ABC9C;
-    border-radius: 6px;
-    padding: 6px;
+    font-size: 16px;
+    border-radius: 10px;
+    border: none;
 }
 
-#passwordButtons QPushButton {
-    background-color: #1ABC9C;
-    color: white;
-    border-radius: 6px;
-    padding: 6px 12px;
+#yesBtn:hover {
+    background-color: #e74c3c;
 }
 
-#passwordButtons QPushButton:hover {
-    background-color: #16A085;
+#noBtn:hover {
+    background-color: #2ecc71;
 }
+

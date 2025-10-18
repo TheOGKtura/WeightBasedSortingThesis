@@ -321,6 +321,36 @@ class Ui_MainWindow(object):
         self.buttonReturnSettings.clicked.connect(lambda: self.stackedWidget.setCurrentIndex(0))
         self.stackedWidget.addWidget(self.settings)
 
+
+        self.buttonExit = QtWidgets.QPushButton("Exit Program", self.settings)
+        self.buttonExit.setGeometry(50, 400, 120, 50)
+        self.buttonExit.clicked.connect(self.show_exit_popup)
+        
+        # === POPUP OVERLAY ===
+        self.popup = QtWidgets.QFrame(self.settings)
+        self.popup.setObjectName("popupOverlay")
+        self.popup.setGeometry(0, 0, 800, 480)
+        self.popup.hide()
+
+        # --- Inner box ---
+        self.popup_box = QtWidgets.QFrame(self.popup)
+        self.popup_box.setObjectName("popupBox")
+        self.popup_box.setGeometry(200, 150, 400, 180)
+
+        self.labelPopup = QtWidgets.QLabel("Are you sure you want to exit?", self.popup_box)
+        self.labelPopup.setObjectName("labelPopup")
+        self.labelPopup.setGeometry(50, 40, 300, 30)
+
+        self.yes_btn = QtWidgets.QPushButton("YES", self.popup_box)
+        self.yes_btn.setObjectName("yesBtn")
+        self.yes_btn.setGeometry(80, 100, 100, 40)
+        self.yes_btn.clicked.connect(QtWidgets.QApplication.quit)
+
+        self.no_btn = QtWidgets.QPushButton("NO", self.popup_box)
+        self.no_btn.setObjectName("noBtn")
+        self.no_btn.setGeometry(220, 100, 100, 40)
+        self.no_btn.clicked.connect(self.popup.hide)
+
         # === UPTIME TRACKER ===
         self.start_time = time.time()
         self.uptime_timer = QtCore.QTimer()
@@ -495,7 +525,9 @@ class Ui_MainWindow(object):
         # Update both labels
         self.label_datetime.setText(datetime_str)
         self.label_uptime.setText(uptime_str)
-
+    
+    def show_exit_popup(self):
+        self.popup.show()
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
