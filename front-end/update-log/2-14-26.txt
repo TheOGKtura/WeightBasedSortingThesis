@@ -1,0 +1,10 @@
+Preliminary Role Restrictions Established with login_diallog.py initaiting it within the main.py called first before loading wssgui.py
+within the login_diallog extracts role permissions in roles.py where it refers to the interactables(btns, or any input from pyqt). thefore
+creating a seperate component, isolating what is needed to be change or updated. 
+
+main.py still facilitates the logic for each module components
+
+needed to be addressed are dashboard/graph for analytics and logistics to be implemented. 
+
+If all bases for the frontend and backend with database implemented, would we consider adding a basic website for remote access.
+

@@ -1,0 +1,52 @@
+/* ===== Login Base ===== */
+QDialog {
+    background-color: #1e1e1e;
+}
+
+/* ===== Title ===== */
+QLabel {
+    color: #ffffff;
+    font-family: Arial;
+}
+
+/* Specific title */
+QLabel#titleLabel {
+    font-size: 28px;
+    font-weight: bold;
+}
+
+/* ===== ComboBox & Input ===== */
+QComboBox,
+QLineEdit {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    border: 2px solid #3c3c3c;
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 18px;
+}
+
+QComboBox:focus,
+QLineEdit:focus {
+    border: 2px solid #0078d7;
+}
+
+/* ===== Buttons ===== */
+QPushButton {
+    background-color: #0078d7;
+    color: white;
+    font-size: 20px;
+    font-weight: bold;
+    border-radius: 10px;
+    padding: 12px;
+}
+
+QPushButton:pressed {
+    background-color: #005fa3;
+}
+
+/* ===== Error Label ===== */
+QLabel#errorLabel {
+    color: #ff4d4d;
+    font-size: 14px;
+}

@@ -16,7 +16,6 @@ class Ui_MainWindow(object):
         MainWindow.resize(800, 480)
         MainWindow.setMinimumSize(QSize(800, 480))
         MainWindow.setMaximumSize(QSize(800, 480))
-
         self.centralwidget_app_background = QWidget(MainWindow)
         self.centralwidget_app_background.setObjectName(u"centralwidget_app_background")
 
@@ -37,8 +36,9 @@ class Ui_MainWindow(object):
 
         self.cameraFeed = QLabel(self.page_mainpage)
         self.cameraFeed.setObjectName(u"cameraFeed")
-
-        self.cameraFeed.setGeometry(QRect(349, 188, 71, 20))
+        self.cameraFeed.setGeometry(QRect(180, 30, 420, 360))
+        #self.cameraFeed.setScaledContents(True)
+        self.cameraFeed.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.frame_notif = QFrame(self.page_mainpage)
         self.frame_notif.setObjectName(u"frame_notif")
@@ -52,11 +52,11 @@ class Ui_MainWindow(object):
 
         self.label_time = QLabel(self.frame_notif)
         self.label_time.setObjectName(u"label_time")
-        self.label_time.setGeometry(QRect(600, 10, 60, 16))
+        self.label_time.setGeometry(QRect(575, 10, 150, 16))
 
         self.label_runtime = QLabel(self.frame_notif)
         self.label_runtime.setObjectName(u"label_runtime")
-        self.label_runtime.setGeometry(QRect(530, 10, 49, 16))
+        self.label_runtime.setGeometry(QRect(500, 10, 60, 16))
 
         self.frame_redIndicator = QFrame(self.page_mainpage)
         self.frame_redIndicator.setObjectName(u"frame_redIndicator")
@@ -116,9 +116,9 @@ class Ui_MainWindow(object):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"MainWindow", None))
         self.cameraFeed.setText(QCoreApplication.translate("MainWindow", u"Camera Feed", None))
 
-        self.label_detected_goods.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_time.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
-        self.label_runtime.setText(QCoreApplication.translate("MainWindow", u"TextLabel", None))
+        self.label_detected_goods.setText(QCoreApplication.translate("MainWindow", u"No Goods Detected", None))
+        self.label_time.setText(QCoreApplication.translate("MainWindow", u"Time", None))
+        self.label_runtime.setText(QCoreApplication.translate("MainWindow", u"Uptime", None))
         self.pushButton_start.setText(QCoreApplication.translate("MainWindow", u"Start", None))
         self.pushButton_analytics.setText(QCoreApplication.translate("MainWindow", u"Analytics", None))
         self.pushButton_logistics.setText(QCoreApplication.translate("MainWindow", u"Logistics", None))

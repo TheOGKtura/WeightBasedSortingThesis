@@ -1,0 +1,5 @@
+#ignoring venv
+wss/
+#ignoring pycache
+front-end/_pycache_/
+

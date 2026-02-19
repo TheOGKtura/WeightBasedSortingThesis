@@ -1,0 +1,29 @@
+QPushButton {
+    font-weight: bold;
+}
+
+QLabel {
+    font-weight: bold;
+}
+
+QPushButton#pushButton_start {
+    background-color: #22c55e;
+}
+
+QPushButton#pushButton_start:checked {
+    background-color: #ef4444; 
+}
+
+QPushButton#pushButton_logistics {
+    background-color: #0ea5e9;
+}
+
+QPushButton#pushButton_analytics {
+    background-color: #8b5cf6;
+}
+
+#<------>
+
+
+#<----->
+
