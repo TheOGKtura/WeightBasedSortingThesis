@@ -21,6 +21,12 @@ QPushButton#pushButton_logistics {
 QPushButton#pushButton_analytics {
     background-color: #8b5cf6;
 }
+QPushButton#pushButton_settings {
+    background-color: #f59e0b;
+}
+QPushButton#pushButton_home {
+    background-color: #64748b;
+}
 
 #<------>
 

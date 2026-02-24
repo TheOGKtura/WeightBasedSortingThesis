@@ -7,7 +7,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QApplication, QFrame, QLabel, QMainWindow,
-    QPushButton, QSizePolicy, QStackedWidget, QWidget)
+    QPushButton, QSizePolicy, QStackedWidget, QWidget, QSlider)
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -71,37 +71,77 @@ class Ui_MainWindow(object):
         self.frame_greenIndicator.setFrameShadow(QFrame.Shadow.Raised)
         self.stackedWidget_page_selector.addWidget(self.page_mainpage)
 
+        #=================================
         self.page_analytics = QWidget()
         self.page_analytics.setObjectName(u"page_analytics")
         self.stackedWidget_page_selector.addWidget(self.page_analytics)
 
+
+        #=================================
         self.page_logistics = QWidget()
         self.page_logistics.setObjectName(u"page_logistics")
         self.stackedWidget_page_selector.addWidget(self.page_logistics)
 
-        self.pushButton_start = QPushButton(self.frame_background)
-        self.pushButton_start.setObjectName(u"pushButton_start")
-        self.pushButton_start.setGeometry(QRect(640, 390, 131, 55))
+        #=================================
+        self.page_settings = QWidget()
+        self.page_settings.setObjectName(u"page_settings")
+        self.stackedWidget_page_selector.addWidget(self.page_settings)
 
-        self.pushButton_analytics = QPushButton(self.frame_background)
-        self.pushButton_analytics.setObjectName(u"pushButton_analytics")
-        self.pushButton_analytics.setGeometry(QRect(500, 390, 131, 55))
+        self.slider_worktime = QSlider(Qt.Horizontal, self.page_settings)
+        self.slider_worktime.setObjectName(u"slider_worktime")
+        self.slider_worktime.setGeometry(QRect(20, 20, 160, 22))
+        
+        self.slider_worktime.setMinimum(0)
+        self.slider_worktime.setMaximum(3)
+        self.slider_worktime.setSingleStep(1)
+        self.slider_worktime.setPageStep(1)
+        self.slider_worktime.setTickInterval(1)
+        self.slider_worktime.setTickPosition(QSlider.TicksBelow)
+        self.slider_worktime.setValue(0) 
+        
+        self.slider_label = QLabel(self.page_settings)
+        self.slider_label.setObjectName(u"slider_label")
+        self.slider_label.setGeometry(QRect(20, 50, 200, 16))
+        self.slider_label.setText("Set Worktime (hours): 2")
 
-        self.pushButton_logistics = QPushButton(self.frame_background)
-        self.pushButton_logistics.setObjectName(u"pushButton_logistics")
-        self.pushButton_logistics.setGeometry(QRect(360, 390, 131, 55))
+        self.pushButton_logout = QPushButton(self.page_settings)
+        self.pushButton_logout.setObjectName(u"pushButton_logout")
+        self.pushButton_logout.setGeometry(QRect(20, 90, 200, 55))
 
+
+        #=============================
+        bar_y = 385
+        bar_h = 65
+        left = 10
+        gap = 10
+        btn_w = 145  # 5 buttons across: 5*150 + 4*6 + 2*10 = 794 (fits)
+
+        # Settings
         self.pushButton_settings = QPushButton(self.frame_background)
         self.pushButton_settings.setObjectName(u"pushButton_settings")
-        self.pushButton_settings.setGeometry(QRect(20, 390, 61, 61))
+        self.pushButton_settings.setGeometry(QRect(left + (btn_w + gap) * 0, bar_y, btn_w, bar_h))
 
-        self.pushButton_back = QPushButton(self.frame_background)
-        self.pushButton_back.setObjectName(u"pushButton_return")
-        self.pushButton_back.setGeometry(QRect(90, 390, 131, 55))
+        # Home (NEW)
+        self.pushButton_home = QPushButton(self.frame_background)
+        self.pushButton_home.setObjectName(u"pushButton_home")
+        self.pushButton_home.setGeometry(QRect(left + (btn_w + gap) * 1, bar_y, btn_w, bar_h))
 
-        self.label_operation_status = QLabel(self.frame_background)
-        self.label_operation_status.setObjectName(u"label_operation_status")
-        self.label_operation_status.setGeometry(QRect(250, 400, 81, 31))
+        # Logistics
+        self.pushButton_logistics = QPushButton(self.frame_background)
+        self.pushButton_logistics.setObjectName(u"pushButton_logistics")
+        self.pushButton_logistics.setGeometry(QRect(left + (btn_w + gap) * 2, bar_y, btn_w, bar_h))
+
+        # Analytics
+        self.pushButton_analytics = QPushButton(self.frame_background)
+        self.pushButton_analytics.setObjectName(u"pushButton_analytics")
+        self.pushButton_analytics.setGeometry(QRect(left + (btn_w + gap) * 3, bar_y, btn_w, bar_h))
+
+        # Start
+        self.pushButton_start = QPushButton(self.frame_background)
+        self.pushButton_start.setObjectName(u"pushButton_start")
+        self.pushButton_start.setGeometry(QRect(left + (btn_w + gap) * 4, bar_y, btn_w, bar_h))
+
+
         MainWindow.setCentralWidget(self.centralwidget_app_background)
 
         self.retranslateUi(MainWindow)
@@ -118,12 +158,13 @@ class Ui_MainWindow(object):
 
         self.label_detected_goods.setText(QCoreApplication.translate("MainWindow", u"No Goods Detected", None))
         self.label_time.setText(QCoreApplication.translate("MainWindow", u"Time", None))
+       
         self.label_runtime.setText(QCoreApplication.translate("MainWindow", u"Uptime", None))
         self.pushButton_start.setText(QCoreApplication.translate("MainWindow", u"Start", None))
         self.pushButton_analytics.setText(QCoreApplication.translate("MainWindow", u"Analytics", None))
         self.pushButton_logistics.setText(QCoreApplication.translate("MainWindow", u"Logistics", None))
         self.pushButton_settings.setText(QCoreApplication.translate("MainWindow", u"Settings", None))
-        self.pushButton_back.setText(QCoreApplication.translate("MainWindow", u"Back", None))
-        self.label_operation_status.setText(QCoreApplication.translate("MainWindow", u"Idle", None))
+        self.pushButton_logout.setText(QCoreApplication.translate("MainWindow", u"Logout", None))
+        self.pushButton_home.setText(QCoreApplication.translate("MainWindow", u"Home", None))
     # retranslateUi
 
