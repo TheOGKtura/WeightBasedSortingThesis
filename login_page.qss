@@ -1,0 +1,149 @@
+/* ══════════════════════════════════════════
+   Login Page Styles
+   ══════════════════════════════════════════ */
+
+#leftPanel {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 #2c3e50, stop: 1 #3498db
+    );
+    border: none;
+}
+
+#welcomeLabel {
+    color: #ffffff;
+    font-size: 26px;
+    font-weight: bold;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#subtitleLabel {
+    color: #bdc3c7;
+    font-size: 14px;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#rightPanel {
+    background-color: #ffffff;
+    border: none;
+}
+
+#formTitle {
+    color: #2c3e50;
+    font-size: 24px;
+    font-weight: bold;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#fieldLabel {
+    color: #7f8c8d;
+    font-size: 13px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-weight: bold;
+}
+
+#inputField {
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 15px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    background-color: #fafafa;
+    color: #2c3e50;
+}
+
+#inputField:focus {
+    border: 2px solid #3498db;
+    background-color: #ffffff;
+}
+
+#loginButton {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #3498db, stop: 1 #2980b9
+    );
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: bold;
+    font-family: "Segoe UI", Arial, sans-serif;
+    letter-spacing: 2px;
+}
+
+#loginButton:pressed {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 0,
+        stop: 0 #2980b9, stop: 1 #2471a3
+    );
+}
+
+#statusLabel {
+    font-size: 13px;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+
+/* ══════════════════════════════════════════
+   Main GUI Styles (page_main, etc.)
+   ══════════════════════════════════════════ */
+
+QMainWindow {
+    background-color: #2c3e50;
+}
+
+#page_main, #page_settings, #page_analytics {
+    background-color: #2c3e50;
+}
+
+#frame_camera {
+    background-color: #1a1a2e;
+    border: 2px solid #3498db;
+    border-radius: 6px;
+}
+
+#frame_product_name,
+#frame_sys_time,
+#frame_product_description,
+#frame_account {
+    background-color: #34495e;
+    border: 1px solid #4a6278;
+    border-radius: 6px;
+}
+
+#frame_green_ind {
+    background-color: #27ae60;
+    border: 2px solid #2ecc71;
+    border-radius: 6px;
+}
+
+#frame_red_ind {
+    background-color: #c0392b;
+    border: 2px solid #e74c3c;
+    border-radius: 6px;
+}
+
+QLabel {
+    color: #ecf0f1;
+    font-size: 13px;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+QPushButton {
+    background-color: #3498db;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: bold;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+QPushButton:pressed {
+    background-color: #2980b9;
+}
+
+QPushButton:disabled {
+    background-color: #7f8c8d;
+    color: #bdc3c7;
+}
