@@ -45,8 +45,8 @@ CLEAR_THRESHOLD = 120.0
 EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor vibration)
 
 # ── Capture / hold ──
-CAPTURE_SECONDS = 5.0
-MIN_CAPTURE_SAMPLES = 30     # ensure enough samples (5s@10sps ≈ 50)
+CAPTURE_SECONDS = 8
+MIN_CAPTURE_SAMPLES = 69     # ensure enough samples (5s@10sps ≈ 50)
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
 # ── UI stabilization (UI only) ──
@@ -325,11 +325,16 @@ class HX711Thread(QThread):
 
 
 class HX711Module(QObject):
-    def __init__(self, label_weight, parent=None):
+    weight_finalized = Signal(float)
+    weight_display_ready = Signal(float)
+
+    def __init__(self, label_weight, label_count=None, parent=None):
         super().__init__(parent)
         self.label_weight = label_weight
+        self.label_count = label_count
         self.thread = None
         self._is_running = False
+        self._captured_count = 0
 
     @property
     def is_running(self) -> bool:
@@ -341,6 +346,7 @@ class HX711Module(QObject):
 
         self.thread = HX711Thread()
         self.thread.weight_display_ready.connect(self._on_weight)
+        self.thread.weight_finalized.connect(self._on_weight_finalized)
         self.thread.start()
         self._is_running = True
 
@@ -353,8 +359,19 @@ class HX711Module(QObject):
 
     def reset(self):
         self.stop()
+        self._captured_count = 0
         self.label_weight.setText("Weight: -")
+        if self.label_count:
+            self.label_count.setText("Count: -")
+
+    def _on_weight_finalized(self, weight: float):
+        self._captured_count += 1
+        if self.label_count:
+            self.label_count.setText(f"Count: {self._captured_count}")
+            self.label_count.adjustSize()
+        self.weight_finalized.emit(weight)
 
     def _on_weight(self, weight: float):
         self.label_weight.setText(f"Weight: {weight:.1f} g")
         self.label_weight.adjustSize()
+        self.weight_display_ready.emit(weight)

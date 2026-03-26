@@ -89,6 +89,10 @@ class Ui_MainWindow(object):
         self.pushButton_start.setObjectName(u"pushButton_start")
         self.pushButton_start.setGeometry(QRect(640, 410, 131, 55))
 
+        self.pushButton_calibrate = QPushButton(self.page_main)
+        self.pushButton_calibrate.setObjectName(u"pushButton_calibrate")
+        self.pushButton_calibrate.setGeometry(QRect(330, 410, 141, 55))
+
         self.pushButton_home = QPushButton(self.page_main)
         self.pushButton_home.setObjectName(u"pushButton_signout") # Change to "home" to "signout"
         self.pushButton_home.setGeometry(QRect(10, 410, 131, 55))
@@ -122,6 +126,7 @@ class Ui_MainWindow(object):
         self.label_product_weight.setText(QCoreApplication.translate("MainWindow", u"Weight: -", None))
         self.label_product_count.setText(QCoreApplication.translate("MainWindow", u"Count: -", None))
         self.pushButton_start.setText(QCoreApplication.translate("MainWindow", u"Start", None))
+        self.pushButton_calibrate.setText(QCoreApplication.translate("MainWindow", u"Calibrate", None))
         self.pushButton_home.setText(QCoreApplication.translate("MainWindow", u"Signout", None))
         self.label_account.setText(QCoreApplication.translate("MainWindow", u"", None))
     # retranslateUi

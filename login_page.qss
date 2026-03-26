@@ -147,3 +147,130 @@ QPushButton:disabled {
     background-color: #7f8c8d;
     color: #bdc3c7;
 }
+
+
+/* ══════════════════════════════════════════
+   Calibration Page Styles
+   ══════════════════════════════════════════ */
+
+#page_calibration {
+    background-color: #243447;
+}
+
+#calibrationTitle {
+    color: #f1f5f9;
+    font-size: 24px;
+    font-weight: bold;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#calibrationSubtitle {
+    color: #b8c4cf;
+    font-size: 13px;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#calibrationBackButton,
+#calibrationPrimaryButton,
+#calibrationGhostButton,
+#calibrationDangerButton {
+    min-height: 34px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 6px 12px;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#calibrationBackButton,
+#calibrationGhostButton {
+    background-color: #3b4d61;
+    color: #ecf0f1;
+    border: 1px solid #50657d;
+}
+
+#calibrationPrimaryButton {
+    background-color: #16a085;
+    color: #ffffff;
+    border: none;
+}
+
+#calibrationDangerButton {
+    background-color: #c0392b;
+    color: #ffffff;
+    border: none;
+}
+
+#metricChip {
+    background-color: #34495e;
+    color: #ecf0f1;
+    border-radius: 6px;
+    padding: 8px 12px;
+    border: 1px solid #4a6278;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+#calibrationFormCard {
+    background-color: #2f4256;
+    border: 1px solid #4b6178;
+    border-radius: 8px;
+}
+
+#calibrationInput {
+    background-color: #f8fafc;
+    color: #1f2937;
+    border: 1px solid #d1d9e2;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 28px;
+}
+
+#carouselHost {
+    border: 1px solid #4b6178;
+    border-radius: 10px;
+    background-color: #1f2d3a;
+}
+
+#carouselIndex {
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+#productCard {
+    background-color: #2f4256;
+    border: 1px solid #4b6178;
+    border-radius: 10px;
+}
+
+#cardTitle {
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: bold;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#cardBody {
+    color: #dce6ef;
+    font-size: 14px;
+    font-family: "Segoe UI", Arial, sans-serif;
+}
+
+#cardStatusGood {
+    color: #2ecc71;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#cardStatusBad {
+    color: #e74c3c;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#calibrationInfo {
+    color: #cbd5e1;
+    font-size: 13px;
+    font-family: "Segoe UI", Arial, sans-serif;
+}

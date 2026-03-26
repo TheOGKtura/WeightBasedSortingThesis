@@ -13,6 +13,7 @@ ROLES = {
         "pushButton_3":         True,
         "pushButton_home":      True,
         "pushButton_settings":  True,
+        "pushButton_calibrate": True,
     },
     "user": {
         "pushButton_start":     True,
@@ -20,6 +21,7 @@ ROLES = {
         "pushButton_3":         False,
         "pushButton_home":      True,
         "pushButton_settings":  False,
+        "pushButton_calibrate": True,
     },
 }
 
