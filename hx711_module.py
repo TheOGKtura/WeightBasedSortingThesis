@@ -1,72 +1,71 @@
 """
-HX711 load-cell module (10 SPS, weight-first) — FIXED + Discrete Target Matching (Option 2)
-+ Robust outlier rejection (Median/MAD). (NO SIMULATION MODE)
+HX711 load-cell module (10 SPS) — CAPTURE (5s) -> FINALIZE -> HOLD until removed
 
-Changes from your earlier version:
-- Removed simulation mode entirely (requires hx711 library + hardware).
-- Added robust outlier rejection for the presence window average.
-- Reduced SNAP_BAND_G default to avoid display "freezing".
-- Increased COUNT_AVG_WINDOW for more stable counting.
+Behavior:
+- IDLE: emit live safe weight while waiting for an item
+- CAPTURING: when item present, collect samples for CAPTURE_SECONDS
+- HOLDING: compute final robust weight once, emit the SAME final weight continuously
+- RESET: when removed (empty confirmed), reset and wait for next item
 
-Counts ONLY when the measured weight (window-robust average) matches one of:
-225, 300, 450, 500, 600, 750, 800, 900, 1000 within ±5%.
+Outlier defenses:
+- Median pre-filter (RAW_MEDIAN_WINDOW=5)
+- Hard gating (reject > MAX_PLAUSIBLE_G; reject jumps > MAX_STEP_G; reject NaN/inf)
+- Robust final weight (MAD-filter + trimmed mean)
+
+Signals:
+- weight_ready: SAFE weight for logic/DB (live in IDLE/CAPTURING, held in HOLDING)
+- weight_display_ready: UI-only stabilized weight (snap band)
+- weight_finalized: emitted ONCE per item (final robust weight)
+- raw_reading: raw library reading (debug; may include spikes)
 """
 
+import math
+import time
 import threading
 import statistics
 from collections import deque
 from PySide6.QtCore import QThread, Signal, QObject
 
-from hx711 import HX711 as HX711Driver  # <-- REQUIRED; will raise if not installed
+from hx711 import HX711 as HX711Driver
 
 
-# ── Configuration (10 SPS tuned) ──
+# ── Pins / calibration ──
 HX711_DOUT_PIN = 5
 HX711_SCK_PIN = 6
-REFERENCE_UNIT = 97.456231590  # <-- replace with your calibrated value (can be negative)
+REFERENCE_UNIT = 223.949121 # replace with your calibrated value
 
-READ_INTERVAL_MS = 100   # 10 SPS
-INTERNAL_SAMPLES = 1     # IMPORTANT for responsiveness (try 3 if still noisy)
+# ── Timing ──
+READ_INTERVAL_MS = 100       # 10 SPS loop
+INTERNAL_SAMPLES = 1         # keep 1 for responsiveness
 
-# Weight handling
+# ── Thresholds ──
 ZERO_THRESHOLD = 5.0
-
-# Display stabilization: use small band; 150g can freeze display across large changes
-SNAP_BAND_G = 10.0
-
-# Counting logic (hysteresis + confirmation)
 PRESENT_THRESHOLD = 200.0
 CLEAR_THRESHOLD = 120.0
+EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor vibration)
 
-COUNT_AVG_WINDOW = 7
-PRESENT_CONFIRM_SAMPLES = 3
-EMPTY_CONFIRM_SAMPLES = 4
+# ── Capture / hold ──
+CAPTURE_SECONDS = 5.0
+MIN_CAPTURE_SAMPLES = 30     # ensure enough samples (5s@10sps ≈ 50)
+TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
-# Drift correction
+# ── UI stabilization (UI only) ──
+SNAP_BAND_G = 10.0
+
+# ── Auto-retare (optional; can briefly block when it runs) ──
 TARE_SAMPLES = 21
-RETARE_EMPTY_SAMPLES = 35  # 35 * 100ms = 3.5s
+RETARE_EMPTY_SAMPLES = 80    # 8s empty before retare (reduces blocking frequency)
 
-# ── Discrete target matching ──
-TARGET_WEIGHTS_G = [225, 300, 450, 500, 600, 750, 800, 900, 1000]
-TOL_PCT = 0.05  # ±5%
-
-# ── Outlier rejection config ──
-ROBUST_Z_THRESH = 3.3     # lower = more aggressive rejection (try 3.0–4.0)
-
-
-def match_target_weight(w_g: float):
-    """Return matched target weight if within tolerance, else None."""
-    for t in TARGET_WEIGHTS_G:
-        if t * (1.0 - TOL_PCT) <= w_g <= t * (1.0 + TOL_PCT):
-            return float(t)
-    return None
+# ── Robust / outlier handling ──
+ROBUST_Z_THRESH = 3.3
+MAX_PLAUSIBLE_G = 1500.0     # max product 1000g => keep margin; rejects 4131g spikes
+MAX_STEP_G = 600.0           # max change per 100ms; tune (400–900) depending on item drop impact
+RAW_MEDIAN_WINDOW = 5        # median window size (odd recommended)
 
 
+# ── Robust helpers ──
 def robust_average(values, z_thresh: float = ROBUST_Z_THRESH) -> float:
-    """
-    Robust average using Median + MAD outlier rejection.
-    Keeps values within z_thresh robust-z of the median.
-    """
+    """Median/MAD-filtered mean for small windows."""
     if not values:
         return 0.0
     if len(values) < 5:
@@ -75,54 +74,125 @@ def robust_average(values, z_thresh: float = ROBUST_Z_THRESH) -> float:
     med = statistics.median(values)
     abs_dev = [abs(x - med) for x in values]
     mad = statistics.median(abs_dev)
-
     if mad == 0:
-        return med
+        return float(med)
 
     def robust_z(x):
         return 0.6745 * (x - med) / mad
 
     filtered = [x for x in values if abs(robust_z(x)) <= z_thresh]
     if not filtered:
-        return med
+        return float(med)
     return sum(filtered) / len(filtered)
 
 
+def robust_trimmed_average(values, z_thresh: float = ROBUST_Z_THRESH, trim_frac: float = TRIM_FRACTION) -> float:
+    """
+    Robust final weight:
+      1) MAD-filter around the median
+      2) Trim top/bottom trim_frac
+      3) Mean of remainder
+    """
+    if not values:
+        return 0.0
+    if len(values) < 8:
+        return robust_average(values, z_thresh=z_thresh)
+
+    med = statistics.median(values)
+    abs_dev = [abs(x - med) for x in values]
+    mad = statistics.median(abs_dev)
+
+    if mad != 0:
+        def robust_z(x):
+            return 0.6745 * (x - med) / mad
+        vals = [x for x in values if abs(robust_z(x)) <= z_thresh]
+        if not vals:
+            vals = [float(med)]
+    else:
+        vals = list(values)
+
+    xs = sorted(vals)
+    k = int(len(xs) * trim_frac)
+    if k > 0 and len(xs) - 2 * k >= 3:
+        xs = xs[k:len(xs) - k]
+
+    return float(sum(xs) / len(xs))
+
+
+def _is_finite(x) -> bool:
+    return isinstance(x, (int, float)) and math.isfinite(x)
+
+
+def _median(dq: deque) -> float:
+    xs = list(dq)
+    if not xs:
+        return 0.0
+    return float(statistics.median(xs))
+
+
+def sanitize_weight(w: float, last_good: float) -> float:
+    """
+    Hard gate:
+    - reject NaN/inf
+    - clamp small/negative to 0
+    - reject > MAX_PLAUSIBLE_G
+    - reject single-step jumps > MAX_STEP_G
+    """
+    if not _is_finite(w):
+        return last_good
+
+    if w < ZERO_THRESHOLD:
+        w = 0.0
+
+    if w > MAX_PLAUSIBLE_G:
+        return last_good
+
+    if abs(w - last_good) > MAX_STEP_G:
+        return last_good
+
+    return float(w)
+
+
+# ── State labels ──
+IDLE = "IDLE"
+CAPTURING = "CAPTURING"
+HOLDING = "HOLDING"
+
+
 class HX711Thread(QThread):
-    """
-    Reads HX711 continuously. Emits weight every sample (fast UI),
-    and emits count only on debounced presence transitions (no duplicates),
-    AND only when the measured weight matches one of the discrete target weights.
-    """
-    weight_ready = Signal(float)
-    count_updated = Signal(int)
-    raw_reading = Signal(float)
+    weight_ready = Signal(float)          # SAFE logic/DB weight (live or held)
+    weight_display_ready = Signal(float)  # UI-only stabilized
+    weight_finalized = Signal(float)      # ONE shot per item
+    raw_reading = Signal(float)           # raw debug
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._running = False
-        self._count = 0
         self._lock = threading.Lock()
 
-        # display stabilization
+        # UI stabilization
         self._last_stable_weight = 0.0
 
-        # counting / presence state
-        self._product_present = False
-        self._presence_window = deque(maxlen=COUNT_AVG_WINDOW)
-        self._present_run = 0
-        self._empty_run = 0
+        # outlier gating
+        self._last_good_weight = 0.0
+        self._raw_window = deque(maxlen=RAW_MEDIAN_WINDOW)
 
-        # retare state
+        # small logic smoothing window
+        self._logic_window = deque(maxlen=7)
+
+        # auto-retare
         self._empty_samples_for_retare = 0
 
-        # last accepted matched target (optional)
-        self._last_matched_target = None
+        # state machine
+        self._state = IDLE
+        self._capture_start = 0.0
+        self._capture_buf = []
+        self._held_weight = 0.0
+        self._empty_run = 0
+        self._final_sent = False
 
     def run(self):
         self._running = True
-        with self._lock:
-            self._count = 0
 
         sensor = HX711Driver(HX711_DOUT_PIN, HX711_SCK_PIN)
         sensor.set_reading_format("MSB", "MSB")
@@ -131,16 +201,22 @@ class HX711Thread(QThread):
         sensor.tare(TARE_SAMPLES)
 
         while self._running:
-            # ── Read one sample ──
-            w = float(sensor.get_weight(INTERNAL_SAMPLES))
-            self.raw_reading.emit(w)
+            # ── Raw read ──
+            w_raw = float(sensor.get_weight(INTERNAL_SAMPLES))
+            self.raw_reading.emit(w_raw)
 
-            # Clamp near-zero/negative drift to 0
-            if w < ZERO_THRESHOLD:
-                w = 0.0
+            # ── Median prefilter + hard gating ──
+            self._raw_window.append(w_raw)
+            w_med = _median(self._raw_window)
+            w = sanitize_weight(w_med, self._last_good_weight)
+            self._last_good_weight = w
 
-            # ── Retare only when empty for long enough ──
-            if w == 0.0:
+            # ── Smooth a bit for logic ──
+            self._logic_window.append(w)
+            w_logic = robust_average(list(self._logic_window), z_thresh=ROBUST_Z_THRESH)
+
+            # ── Auto-retare when empty for long time (optional; can block briefly) ──
+            if w_logic == 0.0:
                 self._empty_samples_for_retare += 1
                 if self._empty_samples_for_retare >= RETARE_EMPTY_SAMPLES:
                     sensor.tare(TARE_SAMPLES)
@@ -148,57 +224,85 @@ class HX711Thread(QThread):
             else:
                 self._empty_samples_for_retare = 0
 
-            # ── Weight stabilization for display ──
-            if w > 0.0:
-                if self._last_stable_weight > 0.0 and abs(w - self._last_stable_weight) <= SNAP_BAND_G:
-                    w_display = self._last_stable_weight
-                else:
-                    self._last_stable_weight = w
-                    w_display = w
-            else:
-                w_display = 0.0
+            now = time.monotonic()
 
-            self.weight_ready.emit(w_display)
+            # ── State machine ──
+            if self._state == IDLE:
+                self._held_weight = 0.0
+                self._empty_run = 0
+                self._final_sent = False
+                self._capture_buf.clear()
 
-            # ── Presence detection using robust averaging over a window ──
-            self._presence_window.append(w)
-            w_avg = robust_average(list(self._presence_window), z_thresh=ROBUST_Z_THRESH)
+                out_weight = w_logic
 
-            if not self._product_present:
-                if w_avg >= PRESENT_THRESHOLD:
-                    self._present_run += 1
-                else:
-                    self._present_run = 0
+                if w_logic >= PRESENT_THRESHOLD:
+                    self._state = CAPTURING
+                    self._capture_start = now
+                    self._capture_buf = [w_logic]
 
-                # Attempt count only when present confirmed N times AND matches a target band
-                if self._present_run >= PRESENT_CONFIRM_SAMPLES:
-                    matched = match_target_weight(w_avg)
-                    if matched is not None:
-                        with self._lock:
-                            self._count += 1
-                            count = self._count
-                        self.count_updated.emit(count)
+            elif self._state == CAPTURING:
+                out_weight = w_logic
+                self._capture_buf.append(w_logic)
 
-                        self._product_present = True
+                # If it disappears early, abort and go back
+                if w_logic <= CLEAR_THRESHOLD:
+                    self._empty_run += 1
+                    if self._empty_run >= 2:
+                        self._state = IDLE
+                        self._capture_buf.clear()
                         self._empty_run = 0
-                        self._last_matched_target = matched
-                    else:
-                        self._last_matched_target = None
+                else:
+                    self._empty_run = 0
 
-                    self._present_run = 0
-            else:
-                if w_avg <= CLEAR_THRESHOLD:
+                elapsed = now - self._capture_start
+                if self._state == CAPTURING and elapsed >= CAPTURE_SECONDS and len(self._capture_buf) >= MIN_CAPTURE_SAMPLES:
+                    final_w = robust_trimmed_average(self._capture_buf, z_thresh=ROBUST_Z_THRESH, trim_frac=TRIM_FRACTION)
+
+                    self._held_weight = final_w
+                    self._state = HOLDING
+
+                    if not self._final_sent:
+                        self.weight_finalized.emit(final_w)
+                        self._final_sent = True
+
+                    out_weight = self._held_weight
+
+            else:  # HOLDING
+                out_weight = self._held_weight
+
+                if w_logic <= CLEAR_THRESHOLD:
                     self._empty_run += 1
                 else:
                     self._empty_run = 0
 
                 if self._empty_run >= EMPTY_CONFIRM_SAMPLES:
-                    self._product_present = False
+                    # Reset for next item
+                    self._state = IDLE
+                    self._held_weight = 0.0
                     self._empty_run = 0
-                    self._present_run = 0
+                    self._final_sent = False
+                    self._capture_buf.clear()
+                    self._logic_window.clear()
+                    self._raw_window.clear()
+                    self._last_good_weight = 0.0
                     self._last_stable_weight = 0.0
-                    self._presence_window.clear()
-                    self._last_matched_target = None
+                    out_weight = 0.0
+
+            # ── Emit SAFE weight (live or held) ──
+            self.weight_ready.emit(float(out_weight))
+
+            # ── UI stabilized weight (snap band) ──
+            if out_weight > 0.0:
+                if self._last_stable_weight > 0.0 and abs(out_weight - self._last_stable_weight) <= SNAP_BAND_G:
+                    w_display = self._last_stable_weight
+                else:
+                    self._last_stable_weight = float(out_weight)
+                    w_display = float(out_weight)
+            else:
+                w_display = 0.0
+                self._last_stable_weight = 0.0
+
+            self.weight_display_ready.emit(w_display)
 
             self.msleep(READ_INTERVAL_MS)
 
@@ -208,23 +312,22 @@ class HX711Thread(QThread):
         self._running = False
         self.wait()
 
-    def reset_count(self):
-        with self._lock:
-            self._count = 0
+    def reset(self):
+        self._state = IDLE
+        self._held_weight = 0.0
+        self._capture_buf.clear()
+        self._logic_window.clear()
+        self._raw_window.clear()
+        self._last_good_weight = 0.0
         self._last_stable_weight = 0.0
-        self._product_present = False
-        self._presence_window.clear()
-        self._present_run = 0
         self._empty_run = 0
-        self._empty_samples_for_retare = 0
-        self._last_matched_target = None
+        self._final_sent = False
 
 
 class HX711Module(QObject):
-    def __init__(self, label_weight, label_count, parent=None):
+    def __init__(self, label_weight, parent=None):
         super().__init__(parent)
         self.label_weight = label_weight
-        self.label_count = label_count
         self.thread = None
         self._is_running = False
 
@@ -237,8 +340,7 @@ class HX711Module(QObject):
             return
 
         self.thread = HX711Thread()
-        self.thread.weight_ready.connect(self._on_weight)
-        self.thread.count_updated.connect(self._on_count)
+        self.thread.weight_display_ready.connect(self._on_weight)
         self.thread.start()
         self._is_running = True
 
@@ -252,12 +354,7 @@ class HX711Module(QObject):
     def reset(self):
         self.stop()
         self.label_weight.setText("Weight: -")
-        self.label_count.setText("Count: -")
 
     def _on_weight(self, weight: float):
         self.label_weight.setText(f"Weight: {weight:.1f} g")
         self.label_weight.adjustSize()
-
-    def _on_count(self, count: int):
-        self.label_count.setText(f"Count: {count}")
-        self.label_count.adjustSize()

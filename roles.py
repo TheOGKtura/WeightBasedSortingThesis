@@ -26,7 +26,7 @@ ROLES = {
 # ── User Accounts ──
 USERS = {
     "admin": {
-        "password": "admin123",
+        "password": "123",
         "role":     "admin",
     },
     "user": {
