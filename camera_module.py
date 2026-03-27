@@ -6,6 +6,8 @@ Falls back to a placeholder if the camera is unavailable.
 
 import os
 import logging
+import cv2
+import numpy as np
 from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtGui import QImage, QPixmap, QFont
 from PySide6.QtWidgets import QLabel, QVBoxLayout
@@ -32,13 +34,29 @@ class CameraThread(QThread):
     frame_ready = Signal(QImage)
     error_occurred = Signal(str)
 
-    def __init__(self, ocr_module, resolution=(640, 480), parent=None):
+    def __init__(self, ocr_module, resolution=(1280, 720), rotation=90, lens_position=0.0, parent=None):
         super().__init__(parent)
         self.resolution = resolution
+        self.rotation = rotation  # 0, 90, 180, 270
+        self.lens_position = lens_position  # 0.0-5.0 focus distance
         self.ocr = ocr_module
         self._running = False
         self.picam = None
         self._frame_count = 0
+
+    def _rotate_image(self, array, rotation):
+        """Rotate image array by 90, 180, or 270 degrees"""
+        if rotation == 0:
+            return array
+        elif rotation == 90:
+            return cv2.rotate(array, cv2.cv2.ROTATE_90_CLOCKWISE)
+        elif rotation == 180:
+            return cv2.rotate(array, cv2.ROTATE_180)
+        elif rotation == 270:
+            return cv2.rotate(array, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        else:
+            logger.warning(f"Invalid rotation {rotation}. Using 0.")
+            return array
 
     def run(self):
         try:
@@ -50,7 +68,10 @@ class CameraThread(QThread):
             )
             self.picam.configure(config)
 
+            # Set focus distance and other controls
             self.picam.set_controls({
+                "AfMode": 1,  # Manual focus mode
+                "LensPosition": self.lens_position,  # Adjustable focus distance
                 "AwbEnable": True,
                 "AwbMode": 0,
                 "ColourGains": (0, 0),
@@ -58,16 +79,31 @@ class CameraThread(QThread):
 
             self.picam.start()
             self._running = True
-            logger.info("Camera started successfully.")
+            logger.info(f"Camera started at {self.resolution} with LensPosition={self.lens_position}")
+
+            # Single autofocus trigger on startup
+            try:
+                self.picam.autofocus_cycle()
+                self.msleep(500)
+                logger.info("Autofocus cycle completed.")
+            except Exception as e:
+                logger.warning(f"Autofocus cycle failed: {e}")
 
             while self._running:
                 try:
                     array = self.picam.capture_array()
+                    
+                    # Apply rotation via OpenCV
+                    if self.rotation != 0:
+                        array = self._rotate_image(array, self.rotation)
+                    
+                    # Make sure array is contiguous in memory
+                    array = np.ascontiguousarray(array)
+                    
                     h, w, ch = array.shape
                     bytes_per_line = ch * w
 
                     # Submit to OCR every 10th frame
-                    # Done HERE in camera thread — never touches main thread
                     self._frame_count += 1
                     if self._frame_count % 10 == 0:
                         self.ocr.submit_frame(array.copy())
@@ -111,8 +147,10 @@ class CameraModule:
     Call start() after login, stop() on logout.
     """
 
-    def __init__(self, frame_camera, ocr_callback=None):
+    def __init__(self, frame_camera, ocr_callback=None, rotation=0, lens_position=0.0):
         self.frame_camera = frame_camera
+        self.rotation = rotation  # Camera rotation: 0, 90, 180, 270
+        self.lens_position = lens_position  # Focus distance: 0.0-5.0
 
         self.video_label = QLabel(frame_camera)
         self.video_label.setAlignment(Qt.AlignCenter)
@@ -150,10 +188,12 @@ class CameraModule:
         self.ocr.reset()
         self.ocr.start()
 
-        # Pass OCR module directly to camera thread
+        # Pass OCR module directly to camera thread with rotation and focus
         self.thread = CameraThread(
             ocr_module=self.ocr,
-            resolution=(640, 480)
+            resolution=(1280, 720),
+            rotation=self.rotation,
+            lens_position=self.lens_position
         )
         self.thread.frame_ready.connect(self._update_frame)
         self.thread.error_occurred.connect(self._on_error)
@@ -169,7 +209,7 @@ class CameraModule:
     def _update_frame(self, qimg: QImage):
         size = self.video_label.size()
         pixmap = QPixmap.fromImage(qimg).scaled(
-            size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            size, Qt.KeepAspectRatio, Qt.FastTransformation
         )
         self.video_label.setPixmap(pixmap)
 
@@ -184,3 +224,4 @@ class CameraModule:
         self.video_label.setStyleSheet(
             "background-color: #1a1a2e; color: #ecf0f1; padding: 10px;"
         )
+

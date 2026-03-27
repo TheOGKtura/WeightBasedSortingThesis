@@ -88,7 +88,7 @@ CLEAR_THRESHOLD = 120.0
 EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor vibration)
 
 # ── Capture / hold ──
-CAPTURE_SECONDS = 8
+CAPTURE_SECONDS = 6
 MIN_CAPTURE_SAMPLES = 69     # ensure enough samples (5s@10sps ≈ 50)
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
