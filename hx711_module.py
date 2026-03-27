@@ -89,7 +89,8 @@ EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor v
 
 # ── Capture / hold ──
 CAPTURE_SECONDS = 6
-MIN_CAPTURE_SAMPLES = 69     # ensure enough samples (5s@10sps ≈ 50)
+EXPECTED_CAPTURE_SAMPLES = int(CAPTURE_SECONDS * (1000 / READ_INTERVAL_MS))
+MIN_CAPTURE_SAMPLES = max(20, int(EXPECTED_CAPTURE_SAMPLES * 0.75))
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
 # ── UI stabilization (UI only) ──
@@ -238,123 +239,135 @@ class HX711Thread(QThread):
     def run(self):
         self._running = True
 
-        sensor = HX711Driver(HX711_DOUT_PIN, HX711_SCK_PIN)
-        sensor.set_reading_format("MSB", "MSB")
-        sensor.set_reference_unit(get_current_reference_unit())
-        sensor.reset()
-        sensor.tare(TARE_SAMPLES)
+        sensor = None
+        try:
+            sensor = HX711Driver(HX711_DOUT_PIN, HX711_SCK_PIN)
+            sensor.set_reading_format("MSB", "MSB")
+            sensor.set_reference_unit(get_current_reference_unit())
+            sensor.reset()
+            sensor.tare(TARE_SAMPLES)
 
-        while self._running:
-            # ── Raw read ──
-            w_raw = float(sensor.get_weight(INTERNAL_SAMPLES))
-            self.raw_reading.emit(w_raw)
+            while self._running:
+                # ── Raw read ──
+                try:
+                    w_raw = float(sensor.get_weight(INTERNAL_SAMPLES))
+                except Exception:
+                    # Keep worker alive through transient read failures.
+                    self.msleep(READ_INTERVAL_MS)
+                    continue
 
-            # ── Median prefilter + hard gating ──
-            self._raw_window.append(w_raw)
-            w_med = _median(self._raw_window)
-            w = sanitize_weight(w_med, self._last_good_weight)
-            self._last_good_weight = w
+                self.raw_reading.emit(w_raw)
 
-            # ── Smooth a bit for logic ──
-            self._logic_window.append(w)
-            w_logic = robust_average(list(self._logic_window), z_thresh=ROBUST_Z_THRESH)
+                # ── Median prefilter + hard gating ──
+                self._raw_window.append(w_raw)
+                w_med = _median(self._raw_window)
+                w = sanitize_weight(w_med, self._last_good_weight)
+                self._last_good_weight = w
 
-            # ── Auto-retare when empty for long time (optional; can block briefly) ──
-            if w_logic == 0.0:
-                self._empty_samples_for_retare += 1
-                if self._empty_samples_for_retare >= RETARE_EMPTY_SAMPLES:
-                    sensor.tare(TARE_SAMPLES)
+                # ── Smooth a bit for logic ──
+                self._logic_window.append(w)
+                w_logic = robust_average(list(self._logic_window), z_thresh=ROBUST_Z_THRESH)
+
+                # ── Auto-retare when empty for long time (optional; can block briefly) ──
+                if w_logic == 0.0:
+                    self._empty_samples_for_retare += 1
+                    if self._empty_samples_for_retare >= RETARE_EMPTY_SAMPLES:
+                        sensor.tare(TARE_SAMPLES)
+                        self._empty_samples_for_retare = 0
+                else:
                     self._empty_samples_for_retare = 0
-            else:
-                self._empty_samples_for_retare = 0
 
-            now = time.monotonic()
+                now = time.monotonic()
 
-            # ── State machine ──
-            if self._state == IDLE:
-                self._held_weight = 0.0
-                self._empty_run = 0
-                self._final_sent = False
-                self._capture_buf.clear()
-
-                out_weight = w_logic
-
-                if w_logic >= PRESENT_THRESHOLD:
-                    self._state = CAPTURING
-                    self._capture_start = now
-                    self._capture_buf = [w_logic]
-
-            elif self._state == CAPTURING:
-                out_weight = w_logic
-                self._capture_buf.append(w_logic)
-
-                # If it disappears early, abort and go back
-                if w_logic <= CLEAR_THRESHOLD:
-                    self._empty_run += 1
-                    if self._empty_run >= 2:
-                        self._state = IDLE
-                        self._capture_buf.clear()
-                        self._empty_run = 0
-                else:
-                    self._empty_run = 0
-
-                elapsed = now - self._capture_start
-                if self._state == CAPTURING and elapsed >= CAPTURE_SECONDS and len(self._capture_buf) >= MIN_CAPTURE_SAMPLES:
-                    final_w = robust_trimmed_average(self._capture_buf, z_thresh=ROBUST_Z_THRESH, trim_frac=TRIM_FRACTION)
-
-                    self._held_weight = final_w
-                    self._state = HOLDING
-
-                    if not self._final_sent:
-                        self.weight_finalized.emit(final_w)
-                        self._final_sent = True
-
-                    out_weight = self._held_weight
-
-            else:  # HOLDING
-                out_weight = self._held_weight
-
-                if w_logic <= CLEAR_THRESHOLD:
-                    self._empty_run += 1
-                else:
-                    self._empty_run = 0
-
-                if self._empty_run >= EMPTY_CONFIRM_SAMPLES:
-                    # Reset for next item
-                    self._state = IDLE
+                # ── State machine ──
+                if self._state == IDLE:
                     self._held_weight = 0.0
                     self._empty_run = 0
                     self._final_sent = False
                     self._capture_buf.clear()
-                    self._logic_window.clear()
-                    self._raw_window.clear()
-                    self._last_good_weight = 0.0
-                    self._last_stable_weight = 0.0
-                    out_weight = 0.0
 
-            # ── Emit SAFE weight (live or held) ──
-            self.weight_ready.emit(float(out_weight))
+                    out_weight = w_logic
 
-            # ── UI stabilized weight (snap band) ──
-            if out_weight > 0.0:
-                if self._last_stable_weight > 0.0 and abs(out_weight - self._last_stable_weight) <= SNAP_BAND_G:
-                    w_display = self._last_stable_weight
+                    if w_logic >= PRESENT_THRESHOLD:
+                        self._state = CAPTURING
+                        self._capture_start = now
+                        self._capture_buf = [w_logic]
+
+                elif self._state == CAPTURING:
+                    out_weight = w_logic
+                    self._capture_buf.append(w_logic)
+
+                    # If it disappears early, abort and go back
+                    if w_logic <= CLEAR_THRESHOLD:
+                        self._empty_run += 1
+                        if self._empty_run >= 2:
+                            self._state = IDLE
+                            self._capture_buf.clear()
+                            self._empty_run = 0
+                    else:
+                        self._empty_run = 0
+
+                    elapsed = now - self._capture_start
+                    if self._state == CAPTURING and elapsed >= CAPTURE_SECONDS and len(self._capture_buf) >= MIN_CAPTURE_SAMPLES:
+                        final_w = robust_trimmed_average(self._capture_buf, z_thresh=ROBUST_Z_THRESH, trim_frac=TRIM_FRACTION)
+
+                        self._held_weight = final_w
+                        self._state = HOLDING
+
+                        if not self._final_sent:
+                            self.weight_finalized.emit(final_w)
+                            self._final_sent = True
+
+                        out_weight = self._held_weight
+
+                else:  # HOLDING
+                    out_weight = self._held_weight
+
+                    if w_logic <= CLEAR_THRESHOLD:
+                        self._empty_run += 1
+                    else:
+                        self._empty_run = 0
+
+                    if self._empty_run >= EMPTY_CONFIRM_SAMPLES:
+                        # Reset for next item
+                        self._state = IDLE
+                        self._held_weight = 0.0
+                        self._empty_run = 0
+                        self._final_sent = False
+                        self._capture_buf.clear()
+                        self._logic_window.clear()
+                        self._raw_window.clear()
+                        self._last_good_weight = 0.0
+                        self._last_stable_weight = 0.0
+                        out_weight = 0.0
+
+                # ── Emit SAFE weight (live or held) ──
+                self.weight_ready.emit(float(out_weight))
+
+                # ── UI stabilized weight (snap band) ──
+                if out_weight > 0.0:
+                    if self._last_stable_weight > 0.0 and abs(out_weight - self._last_stable_weight) <= SNAP_BAND_G:
+                        w_display = self._last_stable_weight
+                    else:
+                        self._last_stable_weight = float(out_weight)
+                        w_display = float(out_weight)
                 else:
-                    self._last_stable_weight = float(out_weight)
-                    w_display = float(out_weight)
-            else:
-                w_display = 0.0
-                self._last_stable_weight = 0.0
+                    w_display = 0.0
+                    self._last_stable_weight = 0.0
 
-            self.weight_display_ready.emit(w_display)
+                self.weight_display_ready.emit(w_display)
 
-            self.msleep(READ_INTERVAL_MS)
-
-        sensor.power_down()
+                self.msleep(READ_INTERVAL_MS)
+        finally:
+            if sensor is not None:
+                try:
+                    sensor.power_down()
+                except Exception:
+                    pass
 
     def stop(self):
         self._running = False
-        self.wait()
+        self.wait(3000)
 
     def reset(self):
         self._state = IDLE

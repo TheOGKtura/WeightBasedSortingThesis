@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from dataclasses import dataclass, asdict
 
 from PySide6.QtCore import Qt, Signal
@@ -39,6 +40,9 @@ class CalibrationPage(QWidget):
         self._reference_unit_applier = None
         self._suggested_reference_unit = None
         self._admin_mode = True
+        self._last_live_ui_update = 0.0
+        self._live_ui_interval_s = 0.20
+        self._last_card_verdict = None
 
         self._profiles_path = os.path.join(
             os.path.dirname(__file__),
@@ -216,6 +220,16 @@ class CalibrationPage(QWidget):
 
     def on_live_weight(self, weight: float):
         self._live_weight = float(weight)
+
+        if not self.isVisible():
+            return
+
+        # Throttle UI refreshes to keep calibration page responsive on low-power devices.
+        now = time.monotonic()
+        if now - self._last_live_ui_update < self._live_ui_interval_s:
+            return
+        self._last_live_ui_update = now
+
         self.live_weight_label.setText(f"Live: {self._live_weight:.1f} g")
         self._refresh_error_chip()
 
@@ -313,6 +327,7 @@ class CalibrationPage(QWidget):
         layout.addWidget(tol)
         layout.addWidget(status)
         layout.addStretch()
+        card._status_label = status
         return card
 
     def _show_previous(self):
@@ -340,6 +355,7 @@ class CalibrationPage(QWidget):
 
     def _on_current_card_changed(self, _index: int):
         self._update_index_label()
+        self._last_card_verdict = None
 
         profile = self._current_profile()
         if profile is None:
@@ -378,13 +394,17 @@ class CalibrationPage(QWidget):
 
         card = self.carousel.currentWidget()
         if card is not None:
-            status_label = card.findChild(QLabel, "cardLiveStatus")
+            status_label = getattr(card, "_status_label", None)
+            if status_label is None:
+                status_label = card.findChild(QLabel, "cardLiveStatus")
             if status_label is not None:
                 status_label.setText(f"Live delta: {delta:+.1f} g ({verdict})")
-                if verdict == "PASS":
-                    status_label.setStyleSheet("color: #2ecc71; font-size: 14px; font-weight: bold;")
-                else:
-                    status_label.setStyleSheet("color: #e74c3c; font-size: 14px; font-weight: bold;")
+                if verdict != self._last_card_verdict:
+                    if verdict == "PASS":
+                        status_label.setStyleSheet("color: #2ecc71; font-size: 14px; font-weight: bold;")
+                    else:
+                        status_label.setStyleSheet("color: #e74c3c; font-size: 14px; font-weight: bold;")
+                    self._last_card_verdict = verdict
 
     def _suggest_reference_unit(self):
         if not self._admin_mode:
