@@ -11,7 +11,7 @@ os.environ["QT_QPA_PLATFORM"] = "wayland"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 os.environ["QT_SCALE_FACTOR"] = "1"
 
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QInputDialog
 from PySide6.QtCore import Qt, QTimer
 
 from gui import Ui_MainWindow
@@ -40,6 +40,7 @@ class MainWindow(QMainWindow):
 
         self.current_user = None
         self.current_role = None
+        self._selected_profile_name = None
         self._relay_cycle_active = False
         self._relay_connected = False
 
@@ -56,6 +57,11 @@ class MainWindow(QMainWindow):
         self.calibration_page = CalibrationPage()
         self.ui.stackedWidget.insertWidget(1, self.calibration_page)
         self.ui.stackedWidget.setCurrentIndex(0)
+
+        self.selected_card_label = QLabel(self.ui.frame_product_description)
+        self.selected_card_label.setObjectName("label_selected_card")
+        self.selected_card_label.setGeometry(20, 112, 220, 20)
+        self.selected_card_label.setText("Card: -")
 
         # ── Modules ──
         self.camera = CameraModule(
@@ -87,6 +93,8 @@ class MainWindow(QMainWindow):
         self.login_page.login_successful.connect(self.on_login_success)
         self.hx711.weight_finalized.connect(self.on_weight_captured)
         self.hx711.weight_display_ready.connect(self.calibration_page.on_live_weight)
+        self.calibration_page.set_reference_unit_provider(self.suggest_reference_unit)
+        self.calibration_page.set_reference_unit_applier(self.apply_reference_unit)
         self.relay.connected_changed.connect(self.on_relay_connected_changed)
         self.relay.status_changed.connect(self.on_relay_status_changed)
         self.calibration_page.back_requested.connect(self.go_to_main_page)
@@ -109,6 +117,11 @@ class MainWindow(QMainWindow):
         self.ui.label_account.adjustSize()
 
         self.apply_permissions(permissions)
+        self.calibration_page.set_admin_mode(role == "admin")
+        self.ui.pushButton_calibrate.setText("Calibrate" if role == "admin" else "Choose Card")
+
+        self._selected_profile_name = self.calibration_page.get_current_profile_name()
+        self._update_selected_card_label()
         self.camera.start()
         self.hx711.reset()
         self.ui.pushButton_start.setText("Start")
@@ -150,10 +163,45 @@ class MainWindow(QMainWindow):
     #  Calibration Navigation
     # ─────────────────────────────────────
     def open_calibration(self):
+        if self.current_role != "admin":
+            self.select_profile_for_user()
+            return
+
         if not self.hx711.is_running:
             self.hx711.start()
             self.ui.pushButton_start.setText("Stop")
         self.ui.stackedWidget.setCurrentWidget(self.calibration_page)
+
+    def select_profile_for_user(self):
+        names = self.calibration_page.get_profile_names()
+        if not names:
+            self.selected_card_label.setText("Card: no profiles")
+            return
+
+        current_idx = 0
+        if self._selected_profile_name in names:
+            current_idx = names.index(self._selected_profile_name)
+
+        selected, ok = QInputDialog.getItem(
+            self,
+            "Select Product Card",
+            "Choose existing card:",
+            names,
+            current_idx,
+            False,
+        )
+        if not ok or not selected:
+            return
+
+        self._selected_profile_name = str(selected)
+        self.calibration_page.select_profile_by_name(self._selected_profile_name)
+        self._update_selected_card_label()
+
+    def _update_selected_card_label(self):
+        if self._selected_profile_name:
+            self.selected_card_label.setText(f"Card: {self._selected_profile_name}")
+        else:
+            self.selected_card_label.setText("Card: -")
 
     def go_to_main_page(self):
         self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
@@ -183,6 +231,23 @@ class MainWindow(QMainWindow):
         self._relay_cycle_active = False
         print("[RELAY] STOP (timer elapsed)")
 
+    def suggest_reference_unit(self, known_weight_g: float) -> float | None:
+        try:
+            return self.hx711.suggest_reference_unit_from_known_weight(known_weight_g)
+        except Exception as e:
+            print(f"[CALIBRATION] Reference suggestion failed: {e}")
+            return None
+
+    def apply_reference_unit(self, new_reference_unit: float) -> float | None:
+        try:
+            applied = self.hx711.apply_reference_unit(new_reference_unit)
+            if applied is not None:
+                print(f"[CALIBRATION] Applied reference unit: {applied:.6f}")
+            return applied
+        except Exception as e:
+            print(f"[CALIBRATION] Apply reference unit failed: {e}")
+            return None
+
     def on_relay_connected_changed(self, connected: bool):
         self._relay_connected = connected
         # Keep conveyor off by default whenever MQTT becomes available.
@@ -203,9 +268,12 @@ class MainWindow(QMainWindow):
         self.camera.stop()
         self.current_user = None
         self.current_role = None
+        self._selected_profile_name = None
         self.ui.pushButton_start.setText("Start")
+        self.ui.pushButton_calibrate.setText("Calibrate")
         self.ui.label_account.setText("Not logged in")
         self.ui.label_product.setText("No Product Detected")
+        self._update_selected_card_label()
         self.login_page.clear_fields()
         self.ui.stackedWidget.setCurrentIndex(0)
 

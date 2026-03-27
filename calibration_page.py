@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
 )
 
-from hx711_module import REFERENCE_UNIT
+from hx711_module import get_current_reference_unit
 
 
 @dataclass
@@ -35,6 +35,10 @@ class CalibrationPage(QWidget):
         self._profiles: list[ProductProfile] = []
         self._card_widgets: list[QWidget] = []
         self._live_weight = 0.0
+        self._reference_unit_provider = None
+        self._reference_unit_applier = None
+        self._suggested_reference_unit = None
+        self._admin_mode = True
 
         self._profiles_path = os.path.join(
             os.path.dirname(__file__),
@@ -44,6 +48,42 @@ class CalibrationPage(QWidget):
         self._build_ui()
         self._load_profiles()
         self._refresh_cards()
+
+    def set_reference_unit_provider(self, provider):
+        self._reference_unit_provider = provider
+
+    def set_reference_unit_applier(self, applier):
+        self._reference_unit_applier = applier
+
+    def set_admin_mode(self, is_admin: bool):
+        self._admin_mode = bool(is_admin)
+
+        self.name_input.setEnabled(self._admin_mode)
+        self.target_input.setEnabled(self._admin_mode)
+        self.tolerance_input.setEnabled(self._admin_mode)
+        self.add_card_button.setEnabled(self._admin_mode)
+        self.capture_target_button.setEnabled(self._admin_mode)
+        self.delete_button.setEnabled(self._admin_mode)
+        self.suggest_button.setEnabled(self._admin_mode)
+        self.apply_button.setEnabled(self._admin_mode and self._suggested_reference_unit is not None)
+
+        if not self._admin_mode:
+            self.suggestion_label.setText("Suggested reference unit: admin only")
+
+    def get_profile_names(self) -> list[str]:
+        return [p.name for p in self._profiles]
+
+    def select_profile_by_name(self, name: str) -> bool:
+        idx = self._find_profile_by_name(name)
+        if idx is None:
+            return False
+        if self.carousel.count() > 0:
+            self.carousel.setCurrentIndex(idx)
+        return True
+
+    def get_current_profile_name(self) -> str | None:
+        profile = self._current_profile()
+        return None if profile is None else profile.name
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -156,16 +196,21 @@ class CalibrationPage(QWidget):
         root.addWidget(self.carousel, 1)
 
         calibration_row = QHBoxLayout()
-        self.reference_label = QLabel(f"Current reference unit: {REFERENCE_UNIT:.6f}")
+        self.reference_label = QLabel(f"Current reference unit: {get_current_reference_unit():.6f}")
         self.reference_label.setObjectName("calibrationInfo")
         self.suggest_button = QPushButton("Suggest New Reference Unit")
         self.suggest_button.setObjectName("calibrationPrimaryButton")
         self.suggest_button.clicked.connect(self._suggest_reference_unit)
+        self.apply_button = QPushButton("Apply Suggested Unit")
+        self.apply_button.setObjectName("calibrationGhostButton")
+        self.apply_button.setEnabled(False)
+        self.apply_button.clicked.connect(self._apply_suggested_reference_unit)
         self.suggestion_label = QLabel("Suggested reference unit: -")
         self.suggestion_label.setObjectName("calibrationInfo")
 
         calibration_row.addWidget(self.reference_label)
         calibration_row.addWidget(self.suggest_button)
+        calibration_row.addWidget(self.apply_button)
         calibration_row.addWidget(self.suggestion_label)
         root.addLayout(calibration_row)
 
@@ -342,13 +387,58 @@ class CalibrationPage(QWidget):
                     status_label.setStyleSheet("color: #e74c3c; font-size: 14px; font-weight: bold;")
 
     def _suggest_reference_unit(self):
+        if not self._admin_mode:
+            self.suggestion_label.setText("Suggested reference unit: admin only")
+            return
+
         profile = self._current_profile()
-        if profile is None or profile.target_weight_g <= 0.0 or self._live_weight <= 0.0:
+        known_weight_g = 0.0
+        if profile is not None and profile.target_weight_g > 0.0:
+            known_weight_g = float(profile.target_weight_g)
+        elif self.target_input.value() > 0.0:
+            known_weight_g = float(self.target_input.value())
+
+        if known_weight_g <= 0.0:
+            self._suggested_reference_unit = None
+            self.apply_button.setEnabled(False)
             self.suggestion_label.setText("Suggested reference unit: -")
             return
 
-        suggested = REFERENCE_UNIT * (self._live_weight / profile.target_weight_g)
+        if self._reference_unit_provider is None:
+            self._suggested_reference_unit = None
+            self.apply_button.setEnabled(False)
+            self.suggestion_label.setText("Suggested reference unit: provider not configured")
+            return
+
+        suggested = self._reference_unit_provider(known_weight_g)
+        if suggested is None:
+            self._suggested_reference_unit = None
+            self.apply_button.setEnabled(False)
+            self.suggestion_label.setText("Suggested reference unit: measurement failed")
+            return
+
+        self._suggested_reference_unit = float(suggested)
+        self.apply_button.setEnabled(True)
         self.suggestion_label.setText(f"Suggested reference unit: {suggested:.6f}")
+
+    def _apply_suggested_reference_unit(self):
+        if not self._admin_mode:
+            self.suggestion_label.setText("Suggested reference unit: admin only")
+            return
+
+        if self._suggested_reference_unit is None:
+            return
+        if self._reference_unit_applier is None:
+            self.suggestion_label.setText("Suggested reference unit: applier not configured")
+            return
+
+        applied = self._reference_unit_applier(float(self._suggested_reference_unit))
+        if applied is None:
+            self.suggestion_label.setText("Suggested reference unit: apply failed")
+            return
+
+        self.reference_label.setText(f"Current reference unit: {float(applied):.6f}")
+        self.suggestion_label.setText(f"Suggested reference unit: {float(applied):.6f} (applied)")
 
     def _save_profiles(self):
         try:

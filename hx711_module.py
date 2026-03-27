@@ -23,6 +23,8 @@ import math
 import time
 import threading
 import statistics
+import json
+import os
 from collections import deque
 from PySide6.QtCore import QThread, Signal, QObject
 
@@ -32,7 +34,48 @@ from hx711 import HX711 as HX711Driver
 # ── Pins / calibration ──
 HX711_DOUT_PIN = 5
 HX711_SCK_PIN = 6
-REFERENCE_UNIT = 223.949121 # replace with your calibrated value
+DEFAULT_REFERENCE_UNIT = 223.949121
+_CALIBRATION_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "hx711_calibration.json")
+
+
+def _load_reference_unit() -> float:
+    if not os.path.exists(_CALIBRATION_CONFIG_PATH):
+        return float(DEFAULT_REFERENCE_UNIT)
+
+    try:
+        with open(_CALIBRATION_CONFIG_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        value = float(payload.get("reference_unit", DEFAULT_REFERENCE_UNIT))
+        if value <= 0.0 or not math.isfinite(value):
+            return float(DEFAULT_REFERENCE_UNIT)
+        return value
+    except Exception:
+        return float(DEFAULT_REFERENCE_UNIT)
+
+
+REFERENCE_UNIT = _load_reference_unit()
+
+
+def get_current_reference_unit() -> float:
+    return float(REFERENCE_UNIT)
+
+
+def persist_reference_unit(value: float) -> float | None:
+    global REFERENCE_UNIT
+
+    if not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+
+    value = float(value)
+    if value <= 0.0:
+        return None
+
+    payload = {"reference_unit": value}
+    with open(_CALIBRATION_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
+
+    REFERENCE_UNIT = value
+    return value
 
 # ── Timing ──
 READ_INTERVAL_MS = 100       # 10 SPS loop
@@ -55,6 +98,7 @@ SNAP_BAND_G = 10.0
 # ── Auto-retare (optional; can briefly block when it runs) ──
 TARE_SAMPLES = 21
 RETARE_EMPTY_SAMPLES = 80    # 8s empty before retare (reduces blocking frequency)
+CALIBRATION_SAMPLES = 35
 
 # ── Robust / outlier handling ──
 ROBUST_Z_THRESH = 3.3
@@ -196,7 +240,7 @@ class HX711Thread(QThread):
 
         sensor = HX711Driver(HX711_DOUT_PIN, HX711_SCK_PIN)
         sensor.set_reading_format("MSB", "MSB")
-        sensor.set_reference_unit(REFERENCE_UNIT)
+        sensor.set_reference_unit(get_current_reference_unit())
         sensor.reset()
         sensor.tare(TARE_SAMPLES)
 
@@ -363,6 +407,60 @@ class HX711Module(QObject):
         self.label_weight.setText("Weight: -")
         if self.label_count:
             self.label_count.setText("Count: -")
+
+    def suggest_reference_unit_from_known_weight(
+        self,
+        known_weight_g: float,
+        samples: int = CALIBRATION_SAMPLES,
+    ) -> float | None:
+        """
+        Compute REFERENCE_UNIT from raw HX711 counts using a known mass.
+
+        Formula:
+            reference_unit = raw_counts / known_weight_g
+
+        This is independent from the currently configured REFERENCE_UNIT.
+        """
+        if known_weight_g <= 0.0:
+            return None
+
+        was_running = self._is_running
+        if was_running:
+            self.stop()
+
+        sensor = None
+        try:
+            sensor = HX711Driver(HX711_DOUT_PIN, HX711_SCK_PIN)
+            sensor.set_reading_format("MSB", "MSB")
+            sensor.set_reference_unit(1)
+            sensor.reset()
+            sensor.tare(TARE_SAMPLES)
+
+            raw_values = [float(sensor.get_value(1)) for _ in range(max(8, int(samples)))]
+            raw_counts = robust_trimmed_average(raw_values, z_thresh=ROBUST_Z_THRESH, trim_frac=TRIM_FRACTION)
+            if raw_counts <= 0.0:
+                return None
+
+            return float(raw_counts / known_weight_g)
+        finally:
+            if sensor is not None:
+                try:
+                    sensor.power_down()
+                except Exception:
+                    pass
+            if was_running:
+                self.start()
+
+    def apply_reference_unit(self, new_reference_unit: float) -> float | None:
+        was_running = self._is_running
+        if was_running:
+            self.stop()
+
+        try:
+            return persist_reference_unit(new_reference_unit)
+        finally:
+            if was_running:
+                self.start()
 
     def _on_weight_finalized(self, weight: float):
         self._captured_count += 1
