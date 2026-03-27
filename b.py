@@ -1,177 +1,99 @@
 #!/usr/bin/env python3
+"""
+HX711 calibration tester (modified tatobari style)
+
+Shows:
+- live raw counts (above tare) and grams
+- computed REFERENCE_UNIT (counts per gram)
+- verification reading vs known weight
+"""
+
 import time
 import statistics
-import RPi.GPIO as GPIO
+from hx711 import HX711
 
-DOUT = 5   # GPIO number (BCM)
-SCK  = 6   # GPIO number (BCM)
+DOUT = 5
+SCK = 6
 
-# Gain/channel selection:
-# After reading 24 bits, pulse extra clocks:
-# 1 extra pulse = Channel A, gain 128 (most common)
-# 2 extra pulses = Channel B, gain 32
-# 3 extra pulses = Channel A, gain 64
-GAIN_PULSES = 1
+TARE_SAMPLES = 25
+LIVE_HZ = 10
+LIVE_SECONDS = 5.0
 
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(SCK, GPIO.OUT, initial=GPIO.LOW)
-GPIO.setup(DOUT, GPIO.IN)
+CAL_READS = 40
+CAL_DELAY = 0.05
 
-def wait_ready(timeout=1.0):
-    t0 = time.time()
-    while GPIO.input(DOUT) == 1:
-        if time.time() - t0 > timeout:
-            return False
-        time.sleep(0.001)
-    return True
-
-def read_raw(timeout=1.0):
-    if not wait_ready(timeout):
-        raise TimeoutError("HX711 not ready (DOUT stayed high). Check wiring/power/gain rate.")
-
-    # Read 24 bits
-    value = 0
-    for _ in range(24):
-        GPIO.output(SCK, GPIO.HIGH)
-        GPIO.output(SCK, GPIO.LOW)
-        bit = GPIO.input(DOUT)
-        value = (value << 1) | bit
-
-    # Set gain/channel for next conversion
-    for _ in range(GAIN_PULSES):
-        GPIO.output(SCK, GPIO.HIGH)
-        GPIO.output(SCK, GPIO.LOW)
-
-    # Convert from unsigned 24-bit to signed 24-bit (two's complement)
-    if value & 0x800000:
-        value -= 1 << 24
-    return value
-
-def read_average(n=20, delay=0.01):
-    samples = []
+def mean_samples(fn, n=CAL_READS, delay=CAL_DELAY):
+    xs = []
     for _ in range(n):
-        samples.append(read_raw())
+        xs.append(float(fn()))
         time.sleep(delay)
-    return statistics.mean(samples), samples
+    return statistics.mean(xs), xs
 
-def samples_stats(samples):
-    """Return mean/min/max/stdev for a list of numeric samples."""
-    mean = statistics.mean(samples)
-    mn = min(samples)
-    mx = max(samples)
-    stdev = statistics.pstdev(samples) if len(samples) > 1 else 0.0
-    return mean, mn, mx, stdev
-
-def verify_calibration(tare, scale, known_weight,
-                       n=30, delay=0.02,
-                       abs_tolerance=2.0,
-                       pct_tolerance=1.0,
-                       max_stdev_units=1.0):
-    """
-    Verify calibration using a known weight.
-    Pass criteria:
-      - absolute error <= abs_tolerance (in your units)
-      - percent error <= pct_tolerance (%), if known_weight != 0
-      - sample stdev in units <= max_stdev_units (stability)
-    """
-    mean_raw, raw_samples = read_average(n=n, delay=delay)
-
-    # Convert each raw sample to units (so we can get stability in real units)
-    unit_samples = [((r - tare) / scale) for r in raw_samples]
-    u_mean, u_min, u_max, u_stdev = samples_stats(unit_samples)
-
-    err = u_mean - known_weight
-    abs_err = abs(err)
-    pct_err = (abs_err / abs(known_weight) * 100.0) if known_weight != 0 else float("inf")
-
-    pass_abs = abs_err <= abs_tolerance
-    pass_pct = (pct_err <= pct_tolerance) if known_weight != 0 else False
-    pass_stability = u_stdev <= max_stdev_units
-
-    ok = pass_abs and pass_pct and pass_stability
-
-    print("\nCalibration verification results:")
-    print(f"  expected (known):  {known_weight:.4f}")
-    print(f"  measured mean:     {u_mean:.4f}")
-    print(f"  measured min/max:  {u_min:.4f} .. {u_max:.4f}")
-    print(f"  measured stdev:    {u_stdev:.4f}  (units)")
-    print(f"  error:             {err:+.4f}  (abs {abs_err:.4f}, {pct_err:.3f}%)")
-    print("  thresholds:")
-    print(f"    abs_tolerance:   {abs_tolerance:.4f} units")
-    print(f"    pct_tolerance:   {pct_tolerance:.3f}%")
-    print(f"    max_stdev_units: {max_stdev_units:.4f} units")
-    print(f"  STATUS: {'PASS' if ok else 'FAIL'}\n")
-
-    return ok
+def live_stream(hx, seconds=LIVE_SECONDS):
+    """Print live counts+grams for a few seconds."""
+    period = 1.0 / LIVE_HZ
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < seconds:
+        # counts above tare (with ref_unit=1)
+        counts = float(hx.get_value(1))
+        # grams if reference unit has been set to counts/gram
+        grams = float(hx.get_weight(1))
+        print(f"counts={counts:>10.2f}   grams={grams:>8.2f}")
+        time.sleep(period)
 
 def main():
-    try:
-        print("HX711 raw read test. Press Ctrl+C to quit.\n")
-        print(f"Using DOUT=GPIO{DOUT}, SCK=GPIO{SCK}, gain pulses={GAIN_PULSES}\n")
+    hx = HX711(DOUT, SCK)
+    hx.set_reading_format("MSB", "MSB")
 
-        input("Remove all weight from the scale, then press Enter to tare...")
-        tare, tare_samples = read_average(n=30, delay=0.02)
-        t_mean, t_min, t_max, t_stdev = samples_stats(tare_samples)
-        print(f"Tare (mean of 30): {tare:.2f}")
-        print(f"Tare sample span: {t_min} .. {t_max}   stdev={t_stdev:.2f}\n")
+    hx.reset()
 
-        known = float(input("Place a known weight on the scale.\nEnter known weight value (e.g., 500 for grams): ").strip())
-        w_mean, w_samples = read_average(n=30, delay=0.02)
-        w_mean2, w_min, w_max, w_stdev = samples_stats(w_samples)
-        print(f"Loaded mean: {w_mean:.2f}")
-        print(f"Loaded sample span: {w_min} .. {w_max}   stdev={w_stdev:.2f}\n")
+    # Start in "counts mode"
+    hx.set_reference_unit(1.0)
 
-        delta = w_mean - tare
-        if abs(delta) < 1:
-            print("Delta is too small; something is wrong (no signal change).")
-            return
+    input("Remove all weight, then press Enter to tare...")
+    hx.tare(TARE_SAMPLES)
 
-        scale = delta / known  # counts per unit (grams, kg, etc.)
-        print("Calibration result:")
-        print(f"  delta_counts = loaded - tare = {delta:.2f}")
-        print(f"  counts_per_unit = {scale:.6f}  (counts / your_unit)")
-        print(f"  unit_per_count  = {1/scale:.9f} (your_unit / count)\n")
+    print("\nLive readings (EMPTY) for a few seconds:")
+    live_stream(hx, seconds=3.0)
 
-        # --- NEW: verify calibration step ---
-        input("Verification step:\nRemove the weight (back to zero), then press Enter...")
-        # Re-tare check (optional but useful)
-        tare2, tare2_samples = read_average(n=20, delay=0.02)
-        print(f"Re-zero check (mean of 20): {tare2:.2f}  (drift vs tare: {tare2 - tare:+.2f} counts)")
-        input("Now place the SAME known weight back on the scale, then press Enter to verify...")
+    known_g = float(input("\nPlace known weight on scale.\nEnter known weight in grams (e.g., 225): ").strip())
+    input("Let it settle 2 seconds, then press Enter to compute reference...")
+    time.sleep(2.0)
 
-        # Tune these tolerances for your project/scale:
-        abs_tol = max(0.5, known * 0.005)   # e.g., 0.5 units or 0.5% of known, whichever is larger
-        pct_tol = 1.0                       # 1% allowed
-        max_stdev = max(0.2, known * 0.001) # stability requirement
+    # In counts mode, get_value() ~= counts above tare
+    loaded_counts_mean, loaded_counts_samples = mean_samples(lambda: hx.get_value(5))
+    print(f"\nLoaded counts mean: {loaded_counts_mean:.2f}")
+    print(f"Loaded counts span: {min(loaded_counts_samples):.2f} .. {max(loaded_counts_samples):.2f}")
 
-        ok = verify_calibration(
-            tare=tare,
-            scale=scale,
-            known_weight=known,
-            n=30,
-            delay=0.02,
-            abs_tolerance=abs_tol,
-            pct_tolerance=pct_tol,
-            max_stdev_units=max_stdev
-        )
+    if abs(loaded_counts_mean) < 10:
+        print("Counts delta is too small—check wiring / load cell / that the weight is really on the scale.")
+        return
 
-        if not ok:
-            print("Calibration verification failed.")
-            print("Common causes: unstable platform, mechanical binding, wrong wiring, noisy power, wrong gain/channel, or too-low sample count.")
-            print("You can retry calibration with more samples (e.g., 50-100) and ensure the scale is stable.\n")
+    reference_unit = loaded_counts_mean / known_g  # counts per gram
 
-        print("Streaming readings (raw, net, converted). Ctrl+C to stop.")
-        while True:
-            raw = read_raw()
-            net = raw - tare
-            units = net / scale
-            print(f"raw={raw:>10d}  net={net:>12.2f}  units={units:>10.3f}")
-            time.sleep(0.1)
+    print("\n=== COMPUTED CALIBRATION ===")
+    print(f"Known weight:           {known_g:.4f} g")
+    print(f"REFERENCE_UNIT:         {reference_unit:.6f}  (counts/gram)")
+    print("\nPaste into your app:")
+    print(f"REFERENCE_UNIT = {reference_unit:.6f}")
 
-    except KeyboardInterrupt:
-        pass
-    finally:
-        GPIO.cleanup()
+    # Switch to grams mode using computed reference
+    hx.set_reference_unit(reference_unit)
+
+    print("\nLive readings (with calibration applied) for a few seconds:")
+    live_stream(hx, seconds=5.0)
+
+    # Verification (average a bit)
+    measured_g_mean, measured_samples = mean_samples(lambda: hx.get_weight(5))
+    err = measured_g_mean - known_g
+
+    print("\n=== VERIFICATION ===")
+    print(f"Expected: {known_g:.2f} g")
+    print(f"Measured: {measured_g_mean:.2f} g")
+    print(f"Error:    {err:+.2f} g")
+    print(f"Span:     {min(measured_samples):.2f} .. {max(measured_samples):.2f} g")
+
+    hx.power_down()
 
 if __name__ == "__main__":
     main()
