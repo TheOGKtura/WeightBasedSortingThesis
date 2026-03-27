@@ -46,7 +46,7 @@ def _load_reference_unit() -> float:
         with open(_CALIBRATION_CONFIG_PATH, "r", encoding="utf-8") as f:
             payload = json.load(f)
         value = float(payload.get("reference_unit", DEFAULT_REFERENCE_UNIT))
-        if value <= 0.0 or not math.isfinite(value):
+        if value == 0.0 or not math.isfinite(value):
             return float(DEFAULT_REFERENCE_UNIT)
         return value
     except Exception:
@@ -67,7 +67,7 @@ def persist_reference_unit(value: float) -> float | None:
         return None
 
     value = float(value)
-    if value <= 0.0:
+    if value == 0.0:
         return None
 
     payload = {"reference_unit": value}
@@ -438,7 +438,7 @@ class HX711Module(QObject):
 
             raw_values = [float(sensor.get_value(1)) for _ in range(max(8, int(samples)))]
             raw_counts = robust_trimmed_average(raw_values, z_thresh=ROBUST_Z_THRESH, trim_frac=TRIM_FRACTION)
-            if raw_counts <= 0.0:
+            if raw_counts == 0.0:
                 return None
 
             return float(raw_counts / known_weight_g)
