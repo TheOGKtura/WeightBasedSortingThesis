@@ -103,10 +103,9 @@ class CameraThread(QThread):
                     h, w, ch = array.shape
                     bytes_per_line = ch * w
 
-                    # Submit to OCR every 10th frame
+                    # OCR processing disabled (placeholder)
+                    # Frames will not be submitted to OCR module
                     self._frame_count += 1
-                    if self._frame_count % 10 == 0:
-                        self.ocr.submit_frame(array.copy())
 
                     # Send QImage to main thread for display
                     qimg = QImage(
@@ -185,8 +184,7 @@ class CameraModule:
 
         self._show_placeholder("Starting camera...")
 
-        self.ocr.reset()
-        self.ocr.start()
+        # OCR processing disabled - not starting OCR module
 
         # Pass OCR module directly to camera thread with rotation and focus
         self.thread = CameraThread(

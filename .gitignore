@@ -1,1 +1,4 @@
 .venv/
+creds.json
+*service-account*.json
+*serviceAccount*.json
