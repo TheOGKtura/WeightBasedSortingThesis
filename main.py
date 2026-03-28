@@ -311,8 +311,12 @@ class MainWindow(QMainWindow):
             return
 
         if not self._relay_connected:
-            print(f"[RELAY] Skipped RUN for {weight:.1f} g (MQTT not connected)")
-            return
+            # Do not hard-block command on stale UI-side connection flag.
+            # Relay controller still validates its own MQTT connection.
+            print(
+                f"[RELAY] MQTT flag is disconnected for {weight:.1f} g; "
+                "attempting RUN publish anyway"
+            )
 
         added_ms = int(RELAY_RUN_SECONDS * 1000)
         remaining_ms = max(0, self._relay_stop_timer.remainingTime()) if self._relay_cycle_active else 0

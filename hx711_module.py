@@ -34,7 +34,7 @@ from hx711 import HX711 as HX711Driver
 # ── Pins / calibration ──
 HX711_DOUT_PIN = 5
 HX711_SCK_PIN = 6
-DEFAULT_REFERENCE_UNIT = 223.949121
+DEFAULT_REFERENCE_UNIT = 219.949121
 _CALIBRATION_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "hx711_calibration.json")
 
 
@@ -83,7 +83,7 @@ INTERNAL_SAMPLES = 1         # keep 1 for responsiveness
 
 # ── Thresholds ──
 ZERO_THRESHOLD = 5.0
-PRESENT_THRESHOLD = 208.0
+PRESENT_THRESHOLD = 214.0
 CLEAR_THRESHOLD = 140.0
 EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor vibration)
 
@@ -94,7 +94,7 @@ MIN_CAPTURE_SAMPLES = max(20, int(EXPECTED_CAPTURE_SAMPLES * 0.75))
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
 # ── Target qualification for accepted items ──
-TARGET_WEIGHT_MIN_G = 224.5
+TARGET_WEIGHT_MIN_G = 223.5
 TARGET_WEIGHT_MAX_G = 229.5
 TARGET_WEIGHT_TOLERANCE_PCT = 3.5
 
