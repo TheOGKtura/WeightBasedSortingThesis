@@ -90,26 +90,26 @@ EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor v
 # ── Capture / hold ──
 CAPTURE_SECONDS = 3
 EXPECTED_CAPTURE_SAMPLES = int(CAPTURE_SECONDS * (1000 / READ_INTERVAL_MS))
-MIN_CAPTURE_SAMPLES = max(15, int(EXPECTED_CAPTURE_SAMPLES * 0.75))
+MIN_CAPTURE_SAMPLES = max(20, int(EXPECTED_CAPTURE_SAMPLES * 0.75))
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
 # ── Target qualification for accepted items ──
-TARGET_WEIGHT_MIN_G = 225.0
-TARGET_WEIGHT_MAX_G = 228.0
-TARGET_WEIGHT_TOLERANCE_PCT = 3.0
+TARGET_WEIGHT_MIN_G = 224.5
+TARGET_WEIGHT_MAX_G = 229.5
+TARGET_WEIGHT_TOLERANCE_PCT = 3.5
 
 # ── UI stabilization (UI only) ──
-SNAP_BAND_G = 10.0
+SNAP_BAND_G = 6.9
 
 # ── Auto-retare (optional; can briefly block when it runs) ──
-TARE_SAMPLES = 21
-RETARE_EMPTY_SAMPLES = 80    # 8s empty before retare (reduces blocking frequency)
+TARE_SAMPLES = 20
+RETARE_EMPTY_SAMPLES = 40    # 8s empty before retare (reduces blocking frequency)
 CALIBRATION_SAMPLES = 35
 
 # ── Robust / outlier handling ──
 ROBUST_Z_THRESH = 3.3
-MAX_PLAUSIBLE_G = 1500.0     # max product 1000g => keep margin; rejects 4131g spikes
-MAX_STEP_G = 600.0           # max change per 100ms; tune (400–900) depending on item drop impact
+MAX_PLAUSIBLE_G = 1000.0     # max product 1000g => keep margin; rejects 4131g spikes
+MAX_STEP_G = 700.0           # max change per 100ms; tune (400–900) depending on item drop impact
 RAW_MEDIAN_WINDOW = 5        # median window size (odd recommended)
 
 

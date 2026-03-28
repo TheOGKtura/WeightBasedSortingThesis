@@ -26,7 +26,7 @@ from relay_mqtt_controller import RelayMqttConfig, RelayMqttController
 
 RELAY_MQTT_HOST = os.environ.get("RELAY_MQTT_HOST", "127.0.0.1")
 RELAY_MQTT_PORT = int(os.environ.get("RELAY_MQTT_PORT", "1883"))
-RELAY_RUN_SECONDS = float(os.environ.get("RELAY_RUN_SECONDS", "2"))
+RELAY_RUN_SECONDS = float(os.environ.get("RELAY_RUN_SECONDS", "3"))
 
 
 class MainWindow(QMainWindow):
