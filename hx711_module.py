@@ -449,8 +449,33 @@ class HX711Module(QObject):
 
         This is independent from the currently configured REFERENCE_UNIT.
         """
+        details = self.suggest_reference_unit_details_from_known_weight(
+            known_weight_g=known_weight_g,
+            samples=samples,
+        )
+        if details is None:
+            return None
+        return float(details["reference_unit"])
+
+    def suggest_reference_unit_details_from_known_weight(
+        self,
+        known_weight_g: float,
+        samples: int = CALIBRATION_SAMPLES,
+    ) -> dict | None:
+        """
+        Compute REFERENCE_UNIT using raw HX711 counts and return calibration details.
+
+        Returns:
+            {
+                "reference_unit": <float>,
+                "raw_counts": <float>,
+                "samples": <int>
+            }
+        """
         if known_weight_g <= 0.0:
             return None
+
+        used_samples = max(8, int(samples))
 
         was_running = self._is_running
         if was_running:
@@ -460,16 +485,22 @@ class HX711Module(QObject):
         try:
             sensor = HX711Driver(HX711_DOUT_PIN, HX711_SCK_PIN)
             sensor.set_reading_format("MSB", "MSB")
+            # Explicit raw-count mode so calibration is independent from current reference unit.
             sensor.set_reference_unit(1)
             sensor.reset()
             sensor.tare(TARE_SAMPLES)
 
-            raw_values = [float(sensor.get_value(1)) for _ in range(max(8, int(samples)))]
+            raw_values = [float(sensor.get_value(1)) for _ in range(used_samples)]
             raw_counts = robust_trimmed_average(raw_values, z_thresh=ROBUST_Z_THRESH, trim_frac=TRIM_FRACTION)
             if raw_counts <= 0.0:
                 return None
 
-            return float(raw_counts / known_weight_g)
+            reference_unit = float(raw_counts / known_weight_g)
+            return {
+                "reference_unit": reference_unit,
+                "raw_counts": float(raw_counts),
+                "samples": int(used_samples),
+            }
         finally:
             if sensor is not None:
                 try:

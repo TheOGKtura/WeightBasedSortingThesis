@@ -241,9 +241,9 @@ class MainWindow(QMainWindow):
         self._relay_queue_ms = 0
         print("[RELAY] STOP (timer elapsed)")
 
-    def suggest_reference_unit(self, known_weight_g: float) -> float | None:
+    def suggest_reference_unit(self, known_weight_g: float):
         try:
-            return self.hx711.suggest_reference_unit_from_known_weight(known_weight_g)
+            return self.hx711.suggest_reference_unit_details_from_known_weight(known_weight_g)
         except Exception as e:
             print(f"[CALIBRATION] Reference suggestion failed: {e}")
             return None

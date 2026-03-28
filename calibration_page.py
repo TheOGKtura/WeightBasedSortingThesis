@@ -1,6 +1,6 @@
 import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -12,6 +12,53 @@ from PySide6.QtWidgets import (
 )
 
 from hx711_module import get_current_reference_unit
+
+
+class CalibrationWorker(QThread):
+    completed = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, known_weight_g: float, provider, applier, parent=None):
+        super().__init__(parent)
+        self.known_weight_g = float(known_weight_g)
+        self.provider = provider
+        self.applier = applier
+
+    def run(self):
+        try:
+            provider_result = self.provider(self.known_weight_g)
+            if provider_result is None:
+                self.failed.emit("Calibration status: measurement failed")
+                return
+
+            raw_counts = None
+            used_samples = None
+            if isinstance(provider_result, dict):
+                measured_reference = provider_result.get("reference_unit")
+                raw_counts = provider_result.get("raw_counts")
+                used_samples = provider_result.get("samples")
+            else:
+                measured_reference = provider_result
+
+            if measured_reference is None:
+                self.failed.emit("Calibration status: measurement failed")
+                return
+
+            applied = self.applier(float(measured_reference))
+            if applied is None:
+                self.failed.emit("Calibration status: apply failed")
+                return
+
+            self.completed.emit(
+                {
+                    "known_weight_g": self.known_weight_g,
+                    "applied": float(applied),
+                    "raw_counts": raw_counts,
+                    "samples": used_samples,
+                }
+            )
+        except Exception as e:
+            self.failed.emit(f"Calibration status: error ({e})")
 
 
 class CalibrationPage(QWidget):
@@ -27,6 +74,7 @@ class CalibrationPage(QWidget):
         self._admin_mode = True
         self._last_live_ui_update = 0.0
         self._live_ui_interval_s = 0.20
+        self._calibration_worker = None
 
         self._build_ui()
 
@@ -153,17 +201,44 @@ class CalibrationPage(QWidget):
             self.calibration_status_label.setText("Calibration status: applier not configured")
             return
 
-        measured_reference = self._reference_unit_provider(known_weight_g)
-        if measured_reference is None:
-            self.calibration_status_label.setText("Calibration status: measurement failed")
+        if self._calibration_worker is not None and self._calibration_worker.isRunning():
+            self.calibration_status_label.setText("Calibration status: calibration already running")
             return
 
-        applied = self._reference_unit_applier(float(measured_reference))
-        if applied is None:
-            self.calibration_status_label.setText("Calibration status: apply failed")
-            return
+        self.calibrate_button.setEnabled(False)
+        self.calibration_status_label.setText("Calibration status: calibrating...")
 
-        self.reference_label.setText(f"Current reference unit: {float(applied):.6f}")
-        self.calibration_status_label.setText(
-            f"Calibration status: applied ({known_weight_g:.1f} g -> {float(applied):.6f})"
+        self._calibration_worker = CalibrationWorker(
+            known_weight_g=known_weight_g,
+            provider=self._reference_unit_provider,
+            applier=self._reference_unit_applier,
+            parent=self,
         )
+        self._calibration_worker.completed.connect(self._on_calibration_completed)
+        self._calibration_worker.failed.connect(self._on_calibration_failed)
+        self._calibration_worker.finished.connect(self._on_calibration_finished)
+        self._calibration_worker.start()
+
+    def _on_calibration_completed(self, data: dict):
+        applied = float(data.get("applied", 0.0))
+        known_weight_g = float(data.get("known_weight_g", 0.0))
+        raw_counts = data.get("raw_counts")
+        used_samples = data.get("samples")
+
+        self.reference_label.setText(f"Current reference unit: {applied:.6f}")
+        if raw_counts is not None and used_samples is not None:
+            self.calibration_status_label.setText(
+                "Calibration status: "
+                f"raw={float(raw_counts):.1f}, n={int(used_samples)}, "
+                f"applied={applied:.6f}"
+            )
+        else:
+            self.calibration_status_label.setText(
+                f"Calibration status: applied ({known_weight_g:.1f} g -> {applied:.6f})"
+            )
+
+    def _on_calibration_failed(self, message: str):
+        self.calibration_status_label.setText(message)
+
+    def _on_calibration_finished(self):
+        self.calibrate_button.setEnabled(self._admin_mode)
