@@ -204,13 +204,8 @@ def sanitize_weight(w: float, last_good: float) -> float:
 
 
 def is_weight_in_target_range(weight: float) -> bool:
-    """Return True when finalized weight is inside 225-228g with ±3% margin."""
-    if not _is_finite(weight):
-        return False
-
-    lower = TARGET_WEIGHT_MIN_G * (1.0 - (TARGET_WEIGHT_TOLERANCE_PCT / 100.0))
-    upper = TARGET_WEIGHT_MAX_G * (1.0 + (TARGET_WEIGHT_TOLERANCE_PCT / 100.0))
-    return lower <= float(weight) <= upper
+    """Qualification filter disabled: accept every finite finalized weight."""
+    return _is_finite(weight)
 
 
 # ── State labels ──
