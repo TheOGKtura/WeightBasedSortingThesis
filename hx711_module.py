@@ -83,12 +83,12 @@ INTERNAL_SAMPLES = 1         # keep 1 for responsiveness
 
 # ── Thresholds ──
 ZERO_THRESHOLD = 5.0
-PRESENT_THRESHOLD = 214.0
-CLEAR_THRESHOLD = 140.0
+PRESENT_THRESHOLD = 220.0
+CLEAR_THRESHOLD = 210
 EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor vibration)
 
 # ── Capture / hold ──
-CAPTURE_SECONDS = 3
+CAPTURE_SECONDS = 4
 EXPECTED_CAPTURE_SAMPLES = int(CAPTURE_SECONDS * (1000 / READ_INTERVAL_MS))
 MIN_CAPTURE_SAMPLES = max(20, int(EXPECTED_CAPTURE_SAMPLES * 0.75))
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
@@ -96,10 +96,10 @@ TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 # ── Target qualification for accepted items ──
 TARGET_WEIGHT_MIN_G = 223.5
 TARGET_WEIGHT_MAX_G = 229.5
-TARGET_WEIGHT_TOLERANCE_PCT = 3.5
+TARGET_WEIGHT_TOLERANCE_PCT = 2.5
 
 # ── UI stabilization (UI only) ──
-SNAP_BAND_G = 6.9
+SNAP_BAND_G = 2.6
 
 # ── Auto-retare (optional; can briefly block when it runs) ──
 TARE_SAMPLES = 20

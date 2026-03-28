@@ -11,7 +11,7 @@ os.environ["QT_QPA_PLATFORM"] = "wayland"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 os.environ["QT_SCALE_FACTOR"] = "1"
 
-from PySide6.QtWidgets import QApplication, QMainWindow, QLabel, QInputDialog
+from PySide6.QtWidgets import QApplication, QMainWindow, QLabel
 from PySide6.QtCore import Qt, QTimer
 
 from gui import Ui_MainWindow
@@ -20,14 +20,13 @@ from roles import has_permission
 from camera_module import CameraModule
 from clock_module import ClockModule
 from hx711_module import HX711Module
-from calibration_page import CalibrationPage
 from relay_mqtt_controller import RelayMqttConfig, RelayMqttController, RelayCommandMapping
 from firebase_rtdb_module import FirebaseRTDBClient
 
 
 RELAY_MQTT_HOST = os.environ.get("RELAY_MQTT_HOST", "127.0.0.1")
 RELAY_MQTT_PORT = int(os.environ.get("RELAY_MQTT_PORT", "1883"))
-RELAY_RUN_SECONDS = float(os.environ.get("RELAY_RUN_SECONDS", "3"))
+RELAY_RUN_SECONDS = float(os.environ.get("RELAY_RUN_SECONDS", "6"))
 RELAY_PAYLOAD_RUN = os.environ.get("RELAY_PAYLOAD_RUN", "OFF")
 RELAY_PAYLOAD_STOP = os.environ.get("RELAY_PAYLOAD_STOP", "ON")
 RELAY_MQTT_CLIENT_ID = os.environ.get("RELAY_MQTT_CLIENT_ID", f"pyside6-relay-gui-{os.getpid()}")
@@ -60,9 +59,6 @@ class MainWindow(QMainWindow):
         self.login_page = LoginPage()
         self.ui.stackedWidget.insertWidget(0, self.login_page)
 
-        # ── Insert calibration page at index 1 ──
-        self.calibration_page = CalibrationPage()
-        self.ui.stackedWidget.insertWidget(1, self.calibration_page)
         self.ui.stackedWidget.setCurrentIndex(0)
 
         self.selected_card_label = QLabel(self.ui.frame_product_description)
@@ -122,20 +118,16 @@ class MainWindow(QMainWindow):
         self.login_page.login_successful.connect(self.on_login_success)
         self.hx711.weight_qualified.connect(self.on_weight_captured)
         self.hx711.weight_finalized.connect(self.on_weight_finalized)
-        self.hx711.weight_display_ready.connect(self.calibration_page.on_live_weight)
-        self.calibration_page.set_reference_unit_provider(self.suggest_reference_unit)
-        self.calibration_page.set_reference_unit_applier(self.apply_reference_unit)
         self.relay.connected_changed.connect(self.on_relay_connected_changed)
         self.relay.status_changed.connect(self.on_relay_status_changed)
         self.relay.relay_state_changed.connect(self.on_relay_state_changed)
-        self.calibration_page.back_requested.connect(self.go_to_main_page)
 
         # Navigation — Home button logs out and returns to login (index 0)
         self.ui.pushButton_home.clicked.connect(self.logout)
 
         # Start / Stop toggle
         self.ui.pushButton_start.clicked.connect(self.toggle_hx711)
-        self.ui.pushButton_calibrate.clicked.connect(self.open_calibration)
+        self.ui.pushButton_calibrate.setVisible(False)
 
     # ─────────────────────────────────────
     #  Login
@@ -156,10 +148,7 @@ class MainWindow(QMainWindow):
         self.ui.label_account.adjustSize()
 
         self.apply_permissions(permissions)
-        self.calibration_page.set_admin_mode(role == "admin")
-        self.ui.pushButton_calibrate.setText("Calibrate" if role == "admin" else "Choose Card")
-
-        self._selected_profile_name = self.calibration_page.get_current_profile_name()
+        self._selected_profile_name = None
         self._update_selected_card_label()
         self.camera.start()
         self.hx711.reset()
@@ -223,54 +212,11 @@ class MainWindow(QMainWindow):
         print(f"  ║  PRODUCT → {product_name:<27} ║")
         print(f"  ╚═══════════════════════════════════════╝\n")
 
-    # ─────────────────────────────────────
-    #  Calibration Navigation
-    # ─────────────────────────────────────
-    def open_calibration(self):
-        if self.current_role != "admin":
-            self.select_profile_for_user()
-            return
-
-        if not self.hx711.is_running:
-            self.hx711.start()
-            self.ui.pushButton_start.setText("Stop")
-        self.ui.stackedWidget.setCurrentWidget(self.calibration_page)
-        self.firebase.push_event("calibration_opened", {"username": self.current_user})
-
-    def select_profile_for_user(self):
-        names = self.calibration_page.get_profile_names()
-        if not names:
-            self.selected_card_label.setText("Card: no profiles")
-            return
-
-        current_idx = 0
-        if self._selected_profile_name in names:
-            current_idx = names.index(self._selected_profile_name)
-
-        selected, ok = QInputDialog.getItem(
-            self,
-            "Select Product Card",
-            "Choose existing card:",
-            names,
-            current_idx,
-            False,
-        )
-        if not ok or not selected:
-            return
-
-        self._selected_profile_name = str(selected)
-        self.calibration_page.select_profile_by_name(self._selected_profile_name)
-        self._update_selected_card_label()
-
     def _update_selected_card_label(self):
         if self._selected_profile_name:
             self.selected_card_label.setText(f"Card: {self._selected_profile_name}")
         else:
             self.selected_card_label.setText("Card: -")
-
-    def go_to_main_page(self):
-        self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
-        self.firebase.push_event("main_page_opened", {"username": self.current_user})
 
     def on_weight_finalized(self, weight: float):
         self.firebase.push_event(
@@ -288,7 +234,7 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────
     def on_weight_captured(self, weight: float):
         """Add relay runtime for each finalized qualified item."""
-        is_calibration_mode = self.ui.stackedWidget.currentWidget() is self.calibration_page
+        is_calibration_mode = False
         product_name = self.ui.label_product.text().strip() or "Unknown"
 
         self.firebase.push_event(
@@ -338,23 +284,6 @@ class MainWindow(QMainWindow):
         self._relay_cycle_active = False
         self._relay_queue_ms = 0
         print("[RELAY] STOP (timer elapsed)")
-
-    def suggest_reference_unit(self, known_weight_g: float):
-        try:
-            return self.hx711.suggest_reference_unit_details_from_known_weight(known_weight_g)
-        except Exception as e:
-            print(f"[CALIBRATION] Reference suggestion failed: {e}")
-            return None
-
-    def apply_reference_unit(self, new_reference_unit: float) -> float | None:
-        try:
-            applied = self.hx711.apply_reference_unit(new_reference_unit)
-            if applied is not None:
-                print(f"[CALIBRATION] Applied reference unit: {applied:.6f}")
-            return applied
-        except Exception as e:
-            print(f"[CALIBRATION] Apply reference unit failed: {e}")
-            return None
 
     def on_relay_connected_changed(self, connected: bool):
         self._relay_connected = connected
@@ -425,7 +354,6 @@ class MainWindow(QMainWindow):
         self.current_role = None
         self._selected_profile_name = None
         self.ui.pushButton_start.setText("Start")
-        self.ui.pushButton_calibrate.setText("Calibrate")
         self.ui.label_account.setText("Not logged in")
         self.ui.label_product.setText("No Product Detected")
         self._update_selected_card_label()
