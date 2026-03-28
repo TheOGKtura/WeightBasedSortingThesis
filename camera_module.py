@@ -34,7 +34,7 @@ class CameraThread(QThread):
     frame_ready = Signal(QImage)
     error_occurred = Signal(str)
 
-    def __init__(self, ocr_module, resolution=(1280, 720), rotation=90, lens_position=0.0, parent=None):
+    def __init__(self, ocr_module, resolution=(1068, 768), rotation=90, lens_position=1, parent=None):
         super().__init__(parent)
         self.resolution = resolution
         self.rotation = rotation  # 0, 90, 180, 270
@@ -191,7 +191,7 @@ class CameraModule:
         # Pass OCR module directly to camera thread with rotation and focus
         self.thread = CameraThread(
             ocr_module=self.ocr,
-            resolution=(1280, 720),
+            resolution=(1068, 768),
             rotation=self.rotation,
             lens_position=self.lens_position
         )
