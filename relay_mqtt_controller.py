@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -15,6 +16,7 @@ class RelayMqttConfig:
     topic_state: str = "relay/1/state"
     client_id: str = "pyside6-relay-gui"
     keepalive: int = 30
+    reconnect_delay_s: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,7 @@ class RelayMqttController(QObject):
 
         self._connected = False
         self._thread: threading.Thread | None = None
+        self._stop_requested = False
 
         self.client = mqtt.Client(client_id=self.cfg.client_id)
         self.client.on_connect = self._on_connect
@@ -54,11 +57,13 @@ class RelayMqttController(QObject):
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
+        self._stop_requested = False
         self._thread = threading.Thread(target=self._mqtt_worker, daemon=True)
         self._thread.start()
 
     @Slot()
     def stop(self) -> None:
+        self._stop_requested = True
         try:
             self.client.disconnect()
         except Exception:
@@ -85,20 +90,27 @@ class RelayMqttController(QObject):
         self.connected_changed.emit(v)
 
     def _mqtt_worker(self) -> None:
-        try:
-            self.status_changed.emit(f"MQTT: connecting to {self.cfg.host}:{self.cfg.port} ...")
-            self.client.connect(self.cfg.host, self.cfg.port, keepalive=self.cfg.keepalive)
-            self.client.loop_forever()
-        except Exception as e:
-            self.status_changed.emit(f"MQTT: error: {e}")
-            self._set_connected(False)
+        while not self._stop_requested:
+            try:
+                self.status_changed.emit(f"MQTT: connecting to {self.cfg.host}:{self.cfg.port} ...")
+                self.client.connect(self.cfg.host, self.cfg.port, keepalive=self.cfg.keepalive)
+                self.client.loop_forever(retry_first_connection=True)
+            except Exception as e:
+                self.status_changed.emit(f"MQTT: error: {e}")
+                self._set_connected(False)
+
+            if not self._stop_requested:
+                self.status_changed.emit("MQTT: retrying connection...")
+                time.sleep(max(0.5, float(self.cfg.reconnect_delay_s)))
 
     def _publish(self, payload: str) -> None:
         if not self._connected:
             self.status_changed.emit("MQTT: not connected (can't publish)")
             return
         try:
-            self.client.publish(self.cfg.topic_set, payload, qos=0, retain=False)
+            info = self.client.publish(self.cfg.topic_set, payload, qos=1, retain=False)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                self.status_changed.emit(f"MQTT publish failed (rc={info.rc})")
         except Exception as e:
             self.status_changed.emit(f"MQTT publish error: {e}")
 
@@ -113,7 +125,10 @@ class RelayMqttController(QObject):
             self._set_connected(False)
 
     def _on_disconnect(self, client, userdata, rc, properties=None, reasonCode=None):
-        self.status_changed.emit(f"MQTT: disconnected (rc={rc})")
+        if self._stop_requested:
+            self.status_changed.emit("MQTT: disconnected")
+        else:
+            self.status_changed.emit(f"MQTT: disconnected (rc={rc})")
         self._set_connected(False)
 
     def _on_message(self, client, userdata, msg):

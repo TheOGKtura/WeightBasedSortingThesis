@@ -125,7 +125,8 @@ class MainWindow(QMainWindow):
         self._update_selected_card_label()
         self.camera.start()
         self.hx711.reset()
-        self.ui.pushButton_start.setText("Start")
+        self.hx711.start()
+        self.ui.pushButton_start.setText("Stop")
         self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
 
     def apply_permissions(self, permissions: dict):
