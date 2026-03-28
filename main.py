@@ -26,7 +26,7 @@ from relay_mqtt_controller import RelayMqttConfig, RelayMqttController
 
 RELAY_MQTT_HOST = os.environ.get("RELAY_MQTT_HOST", "127.0.0.1")
 RELAY_MQTT_PORT = int(os.environ.get("RELAY_MQTT_PORT", "1883"))
-RELAY_RUN_SECONDS = float(os.environ.get("RELAY_RUN_SECONDS", "11"))
+RELAY_RUN_SECONDS = float(os.environ.get("RELAY_RUN_SECONDS", "3"))
 
 
 class MainWindow(QMainWindow):
@@ -43,6 +43,7 @@ class MainWindow(QMainWindow):
         self._selected_profile_name = None
         self._relay_cycle_active = False
         self._relay_connected = False
+        self._relay_queue_ms = 0
 
         # ── Load QSS ──
         qss_path = os.path.join(os.path.dirname(__file__), "login_page.qss")
@@ -91,7 +92,7 @@ class MainWindow(QMainWindow):
 
         # ── Signals ──
         self.login_page.login_successful.connect(self.on_login_success)
-        self.hx711.weight_finalized.connect(self.on_weight_captured)
+        self.hx711.weight_qualified.connect(self.on_weight_captured)
         self.hx711.weight_display_ready.connect(self.calibration_page.on_live_weight)
         self.calibration_page.set_reference_unit_provider(self.suggest_reference_unit)
         self.calibration_page.set_reference_unit_applier(self.apply_reference_unit)
@@ -210,25 +211,33 @@ class MainWindow(QMainWindow):
     #  Relay by Finalized Weight
     # ─────────────────────────────────────
     def on_weight_captured(self, weight: float):
-        """Run conveyor for a fixed window after stable weight capture."""
+        """Add relay runtime for each finalized qualified item."""
         if self.ui.stackedWidget.currentWidget() is self.calibration_page:
             print(f"[RELAY] Skipped RUN for {weight:.1f} g (calibration mode)")
             return
 
-        if self._relay_cycle_active:
-            return
         if not self._relay_connected:
             print(f"[RELAY] Skipped RUN for {weight:.1f} g (MQTT not connected)")
             return
 
-        self._relay_cycle_active = True
-        self.relay.run()
-        self._relay_stop_timer.start(int(RELAY_RUN_SECONDS * 1000))
-        print(f"[RELAY] Weight captured ({weight:.1f} g). RUN for {RELAY_RUN_SECONDS:.1f}s")
+        added_ms = int(RELAY_RUN_SECONDS * 1000)
+        remaining_ms = max(0, self._relay_stop_timer.remainingTime()) if self._relay_cycle_active else 0
+        self._relay_queue_ms = remaining_ms + added_ms
+
+        if not self._relay_cycle_active:
+            self.relay.run()
+            self._relay_cycle_active = True
+
+        self._relay_stop_timer.start(self._relay_queue_ms)
+        print(
+            f"[RELAY] Qualified weight ({weight:.1f} g). "
+            f"Added {RELAY_RUN_SECONDS:.1f}s, remaining {self._relay_queue_ms / 1000.0:.1f}s"
+        )
 
     def _end_relay_cycle(self):
         self.relay.stop_power()
         self._relay_cycle_active = False
+        self._relay_queue_ms = 0
         print("[RELAY] STOP (timer elapsed)")
 
     def suggest_reference_unit(self, known_weight_g: float) -> float | None:
@@ -264,6 +273,7 @@ class MainWindow(QMainWindow):
         self._relay_stop_timer.stop()
         self.relay.stop_power()
         self._relay_cycle_active = False
+        self._relay_queue_ms = 0
         self.hx711.stop()
         self.camera.stop()
         self.current_user = None
@@ -283,6 +293,7 @@ class MainWindow(QMainWindow):
     def exit_app(self):
         self._relay_stop_timer.stop()
         self.relay.stop_power()
+        self._relay_queue_ms = 0
         self.relay.stop()
         self.hx711.stop()
         self.camera.stop()
@@ -295,6 +306,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._relay_stop_timer.stop()
         self.relay.stop_power()
+        self._relay_queue_ms = 0
         self.relay.stop()
         self.hx711.stop()
         self.camera.stop()

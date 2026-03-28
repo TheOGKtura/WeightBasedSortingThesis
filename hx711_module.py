@@ -88,10 +88,15 @@ CLEAR_THRESHOLD = 120.0
 EMPTY_CONFIRM_SAMPLES = 6    # 0.6s empty required to reset (tune for conveyor vibration)
 
 # ── Capture / hold ──
-CAPTURE_SECONDS = 6
+CAPTURE_SECONDS = 3
 EXPECTED_CAPTURE_SAMPLES = int(CAPTURE_SECONDS * (1000 / READ_INTERVAL_MS))
 MIN_CAPTURE_SAMPLES = max(20, int(EXPECTED_CAPTURE_SAMPLES * 0.75))
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
+
+# ── Target qualification for accepted items ──
+TARGET_WEIGHT_MIN_G = 225.0
+TARGET_WEIGHT_MAX_G = 228.0
+TARGET_WEIGHT_TOLERANCE_PCT = 3.0
 
 # ── UI stabilization (UI only) ──
 SNAP_BAND_G = 10.0
@@ -198,6 +203,16 @@ def sanitize_weight(w: float, last_good: float) -> float:
     return float(w)
 
 
+def is_weight_in_target_range(weight: float) -> bool:
+    """Return True when finalized weight is inside 225-228g with ±3% margin."""
+    if not _is_finite(weight):
+        return False
+
+    lower = TARGET_WEIGHT_MIN_G * (1.0 - (TARGET_WEIGHT_TOLERANCE_PCT / 100.0))
+    upper = TARGET_WEIGHT_MAX_G * (1.0 + (TARGET_WEIGHT_TOLERANCE_PCT / 100.0))
+    return lower <= float(weight) <= upper
+
+
 # ── State labels ──
 IDLE = "IDLE"
 CAPTURING = "CAPTURING"
@@ -208,6 +223,7 @@ class HX711Thread(QThread):
     weight_ready = Signal(float)          # SAFE logic/DB weight (live or held)
     weight_display_ready = Signal(float)  # UI-only stabilized
     weight_finalized = Signal(float)      # ONE shot per item
+    weight_qualified = Signal(float)      # ONE shot per item (target range only)
     raw_reading = Signal(float)           # raw debug
 
     def __init__(self, parent=None):
@@ -316,6 +332,8 @@ class HX711Thread(QThread):
 
                         if not self._final_sent:
                             self.weight_finalized.emit(final_w)
+                            if is_weight_in_target_range(final_w):
+                                self.weight_qualified.emit(final_w)
                             self._final_sent = True
 
                         out_weight = self._held_weight
@@ -383,6 +401,7 @@ class HX711Thread(QThread):
 
 class HX711Module(QObject):
     weight_finalized = Signal(float)
+    weight_qualified = Signal(float)
     weight_display_ready = Signal(float)
 
     def __init__(self, label_weight, label_count=None, parent=None):
@@ -404,6 +423,7 @@ class HX711Module(QObject):
         self.thread = HX711Thread()
         self.thread.weight_display_ready.connect(self._on_weight)
         self.thread.weight_finalized.connect(self._on_weight_finalized)
+        self.thread.weight_qualified.connect(self._on_weight_qualified)
         self.thread.start()
         self._is_running = True
 
@@ -475,12 +495,19 @@ class HX711Module(QObject):
             if was_running:
                 self.start()
 
+    @staticmethod
+    def is_weight_accepted(weight: float) -> bool:
+        return is_weight_in_target_range(weight)
+
     def _on_weight_finalized(self, weight: float):
         self._captured_count += 1
         if self.label_count:
             self.label_count.setText(f"Count: {self._captured_count}")
             self.label_count.adjustSize()
         self.weight_finalized.emit(weight)
+
+    def _on_weight_qualified(self, weight: float):
+        self.weight_qualified.emit(weight)
 
     def _on_weight(self, weight: float):
         self.label_weight.setText(f"Weight: {weight:.1f} g")
