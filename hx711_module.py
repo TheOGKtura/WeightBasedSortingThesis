@@ -500,13 +500,14 @@ class HX711Module(QObject):
         return is_weight_in_target_range(weight)
 
     def _on_weight_finalized(self, weight: float):
+        # Finalized is emitted for all items; tally is handled on qualified-only path.
+        self.weight_finalized.emit(weight)
+
+    def _on_weight_qualified(self, weight: float):
         self._captured_count += 1
         if self.label_count:
             self.label_count.setText(f"Count: {self._captured_count}")
             self.label_count.adjustSize()
-        self.weight_finalized.emit(weight)
-
-    def _on_weight_qualified(self, weight: float):
         self.weight_qualified.emit(weight)
 
     def _on_weight(self, weight: float):
