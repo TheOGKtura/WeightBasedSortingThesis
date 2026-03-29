@@ -70,16 +70,16 @@ class RelayMqttController(QObject):
             pass
 
     @Slot()
-    def run(self) -> None:
-        self._publish(self.mapping.payload_run)
+    def run(self) -> bool:
+        return self._publish(self.mapping.payload_run)
 
     @Slot()
-    def stop_power(self) -> None:
-        self._publish(self.mapping.payload_stop)
+    def stop_power(self) -> bool:
+        return self._publish(self.mapping.payload_stop)
 
     @Slot(str)
-    def publish_raw(self, payload: str) -> None:
-        self._publish(payload)
+    def publish_raw(self, payload: str) -> bool:
+        return self._publish(payload)
 
     # ----- internal -----
 
@@ -103,16 +103,23 @@ class RelayMqttController(QObject):
                 self.status_changed.emit("MQTT: retrying connection...")
                 time.sleep(max(0.5, float(self.cfg.reconnect_delay_s)))
 
-    def _publish(self, payload: str) -> None:
+    def _publish(self, payload: str) -> bool:
         if not self._connected:
             self.status_changed.emit("MQTT: not connected (can't publish)")
-            return
+            return False
         try:
             info = self.client.publish(self.cfg.topic_set, payload, qos=1, retain=False)
             if info.rc != mqtt.MQTT_ERR_SUCCESS:
                 self.status_changed.emit(f"MQTT publish failed (rc={info.rc})")
+                return False
+            info.wait_for_publish(timeout=1.5)
+            if not info.is_published():
+                self.status_changed.emit("MQTT publish timeout")
+                return False
+            return True
         except Exception as e:
             self.status_changed.emit(f"MQTT publish error: {e}")
+            return False
 
     # MQTT callbacks (run in MQTT thread)
     def _on_connect(self, client, userdata, flags, rc, properties=None):

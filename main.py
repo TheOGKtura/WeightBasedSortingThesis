@@ -11,7 +11,7 @@ os.environ["QT_QPA_PLATFORM"] = "wayland"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 os.environ["QT_SCALE_FACTOR"] = "1"
 
-from PySide6.QtWidgets import QApplication, QMainWindow, QLabel
+from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtCore import Qt, QTimer
 
 from gui import Ui_MainWindow
@@ -43,12 +43,13 @@ class MainWindow(QMainWindow):
 
         self.current_user = None
         self.current_role = None
-        self._selected_profile_name = None
         self._relay_cycle_active = False
         self._relay_connected = False
         self._relay_state = None
         self._relay_queue_ms = 0
         self._last_product_name = ""
+        self._green_blinks_left = 0
+        self._red_blinks_left = 0
 
         # ── Load QSS ──
         qss_path = os.path.join(os.path.dirname(__file__), "login_page.qss")
@@ -60,11 +61,6 @@ class MainWindow(QMainWindow):
         self.ui.stackedWidget.insertWidget(0, self.login_page)
 
         self.ui.stackedWidget.setCurrentIndex(0)
-
-        self.selected_card_label = QLabel(self.ui.frame_product_description)
-        self.selected_card_label.setObjectName("label_selected_card")
-        self.selected_card_label.setGeometry(20, 112, 220, 20)
-        self.selected_card_label.setText("Card: -")
 
         # ── Modules ──
         self.camera = CameraModule(
@@ -105,6 +101,14 @@ class MainWindow(QMainWindow):
         self._relay_stop_timer = QTimer(self)
         self._relay_stop_timer.setSingleShot(True)
         self._relay_stop_timer.timeout.connect(self._end_relay_cycle)
+
+        self._green_blink_timer = QTimer(self)
+        self._green_blink_timer.setInterval(140)
+        self._green_blink_timer.timeout.connect(self._on_green_blink_tick)
+
+        self._red_blink_timer = QTimer(self)
+        self._red_blink_timer.setInterval(140)
+        self._red_blink_timer.timeout.connect(self._on_red_blink_tick)
 
         self._telemetry_timer = QTimer(self)
         self._telemetry_timer.setInterval(30000)
@@ -148,12 +152,12 @@ class MainWindow(QMainWindow):
         self.ui.label_account.adjustSize()
 
         self.apply_permissions(permissions)
-        self._selected_profile_name = None
-        self._update_selected_card_label()
         self.camera.start()
         self.hx711.reset()
         self.hx711.start()
         self.ui.pushButton_start.setText("Stop")
+        # Keep conveyor in safe OFF state until a qualified item triggers RUN.
+        self._ensure_relay_on("login_success")
         self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
 
         self.firebase.push_event(
@@ -161,7 +165,6 @@ class MainWindow(QMainWindow):
             {
                 "username": username,
                 "role": role,
-                "selected_profile_name": self._selected_profile_name,
             },
         )
 
@@ -183,6 +186,7 @@ class MainWindow(QMainWindow):
         if self.hx711.is_running:
             self.hx711.stop()
             self.ui.pushButton_start.setText("Start")
+            self._ensure_relay_on("hx711_stopped")
             self.firebase.push_event("hx711_stopped", {"source": "ui_button"})
         else:
             self.hx711.start()
@@ -212,22 +216,19 @@ class MainWindow(QMainWindow):
         print(f"  ║  PRODUCT → {product_name:<27} ║")
         print(f"  ╚═══════════════════════════════════════╝\n")
 
-    def _update_selected_card_label(self):
-        if self._selected_profile_name:
-            self.selected_card_label.setText(f"Card: {self._selected_profile_name}")
-        else:
-            self.selected_card_label.setText("Card: -")
-
     def on_weight_finalized(self, weight: float):
+        accepted = bool(self.hx711.is_weight_accepted(weight))
         self.firebase.push_event(
             "weight_finalized",
             {
                 "weight_g": float(weight),
-                "accepted": bool(self.hx711.is_weight_accepted(weight)),
+                "accepted": accepted,
                 "username": self.current_user,
                 "role": self.current_role,
             },
         )
+        if not accepted:
+            self._blink_red()
 
     # ─────────────────────────────────────
     #  Relay by Finalized Weight
@@ -244,7 +245,6 @@ class MainWindow(QMainWindow):
                 "product_name": product_name,
                 "username": self.current_user,
                 "role": self.current_role,
-                "selected_profile_name": self._selected_profile_name,
                 "relay_connected": self._relay_connected,
                 "relay_cycle_active": self._relay_cycle_active,
                 "relay_queue_ms": self._relay_queue_ms,
@@ -256,12 +256,14 @@ class MainWindow(QMainWindow):
             print(f"[RELAY] Skipped RUN for {weight:.1f} g (calibration mode)")
             return
 
+        # Accepted/qualified item indicator
+        self._blink_green()
+
         if not self._relay_connected:
-            # Do not hard-block command on stale UI-side connection flag.
-            # Relay controller still validates its own MQTT connection.
+            # UI flag can be stale briefly during reconnect; still attempt RUN publish.
             print(
-                f"[RELAY] MQTT flag is disconnected for {weight:.1f} g; "
-                "attempting RUN publish anyway"
+                f"[RELAY] MQTT UI flag disconnected for {weight:.1f} g; "
+                "attempting RUN publish"
             )
 
         added_ms = int(RELAY_RUN_SECONDS * 1000)
@@ -293,7 +295,8 @@ class MainWindow(QMainWindow):
         else:
             print("[MQTT] Disconnected")
         # Startup safety: force relay ON (cut power) when MQTT becomes available.
-        if connected:
+        # Do not interrupt an active timed relay cycle.
+        if connected and not self._relay_cycle_active:
             self._ensure_relay_on("mqtt_connected")
 
     def on_relay_state_changed(self, payload: str):
@@ -309,12 +312,48 @@ class MainWindow(QMainWindow):
         if self._relay_state == "ON":
             print(f"[RELAY] Already ON ({source})")
             return
-        self.relay.publish_raw("ON")
+        self.relay.stop_power()
         print(f"[RELAY] Enforce ON ({source})")
 
     def on_relay_status_changed(self, status: str):
         self.firebase.push_event("relay_status", {"status": status})
         print(f"[RELAY] {status}")
+
+    def _blink_green(self, blinks: int = 3):
+        self._green_blinks_left = max(1, int(blinks)) * 2
+        self.ui.frame_green_ind.setVisible(True)
+        if self._green_blink_timer.isActive():
+            self._green_blink_timer.stop()
+        self._green_blink_timer.start()
+
+    def _blink_red(self, blinks: int = 3):
+        self._red_blinks_left = max(1, int(blinks)) * 2
+        self.ui.frame_red_ind.setVisible(True)
+        if self._red_blink_timer.isActive():
+            self._red_blink_timer.stop()
+        self._red_blink_timer.start()
+
+    def _on_green_blink_tick(self):
+        if self._green_blinks_left <= 0:
+            self._green_blink_timer.stop()
+            self.ui.frame_green_ind.setVisible(True)
+            return
+        self.ui.frame_green_ind.setVisible(not self.ui.frame_green_ind.isVisible())
+        self._green_blinks_left -= 1
+        if self._green_blinks_left <= 0:
+            self._green_blink_timer.stop()
+            self.ui.frame_green_ind.setVisible(True)
+
+    def _on_red_blink_tick(self):
+        if self._red_blinks_left <= 0:
+            self._red_blink_timer.stop()
+            self.ui.frame_red_ind.setVisible(True)
+            return
+        self.ui.frame_red_ind.setVisible(not self.ui.frame_red_ind.isVisible())
+        self._red_blinks_left -= 1
+        if self._red_blinks_left <= 0:
+            self._red_blink_timer.stop()
+            self.ui.frame_red_ind.setVisible(True)
 
     def _publish_heartbeat(self):
         self.firebase.set_state(
@@ -326,7 +365,6 @@ class MainWindow(QMainWindow):
                 "relay_cycle_active": self._relay_cycle_active,
                 "relay_queue_ms": self._relay_queue_ms,
                 "current_product": self.ui.label_product.text().strip(),
-                "current_card": self._selected_profile_name,
             },
         )
 
@@ -352,11 +390,9 @@ class MainWindow(QMainWindow):
         self.camera.stop()
         self.current_user = None
         self.current_role = None
-        self._selected_profile_name = None
         self.ui.pushButton_start.setText("Start")
         self.ui.label_account.setText("Not logged in")
         self.ui.label_product.setText("No Product Detected")
-        self._update_selected_card_label()
         self.login_page.clear_fields()
         self.ui.stackedWidget.setCurrentIndex(0)
 
