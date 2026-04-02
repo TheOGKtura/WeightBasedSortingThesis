@@ -97,6 +97,11 @@ class Ui_MainWindow(object):
         self.pushButton_home.setObjectName(u"pushButton_signout") # Change to "home" to "signout"
         self.pushButton_home.setGeometry(QRect(10, 410, 131, 55))
 
+        self.label_quota = QLabel(self.page_main)
+        self.label_quota.setObjectName(u"label_quota")
+        self.label_quota.setGeometry(QRect(250, 422, 300, 31))
+        self.label_quota.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.frame_account = QFrame(self.page_main)
         self.frame_account.setObjectName(u"frame_account")
         self.frame_account.setGeometry(QRect(20, 350, 251, 51))
@@ -120,7 +125,7 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"MainWindow", None))
-        self.label_product.setText(QCoreApplication.translate("MainWindow", u"No Product Detected", None))
+        self.label_product.setText(QCoreApplication.translate("MainWindow", u" ", None))
         self.label_uptime.setText(QCoreApplication.translate("MainWindow", u" ", None))
         self.label_date.setText(QCoreApplication.translate("MainWindow", u" ", None))
         self.label_product_weight.setText(QCoreApplication.translate("MainWindow", u"Weight: -", None))
@@ -128,5 +133,6 @@ class Ui_MainWindow(object):
         self.pushButton_start.setText(QCoreApplication.translate("MainWindow", u"Start", None))
         self.pushButton_calibrate.setText(QCoreApplication.translate("MainWindow", u"Calibrate", None))
         self.pushButton_home.setText(QCoreApplication.translate("MainWindow", u"Signout", None))
+        self.label_quota.setText(QCoreApplication.translate("MainWindow", u"Quota: -", None))
         self.label_account.setText(QCoreApplication.translate("MainWindow", u"", None))
     # retranslateUi

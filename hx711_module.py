@@ -94,12 +94,12 @@ MIN_CAPTURE_SAMPLES = max(20, int(EXPECTED_CAPTURE_SAMPLES * 0.75))
 TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
 # ── Target qualification for accepted items ──
-TARGET_WEIGHT_MIN_G = 223.5
-TARGET_WEIGHT_MAX_G = 229.5
-TARGET_WEIGHT_TOLERANCE_PCT = 2.5
+TARGET_WEIGHT_MIN_G = 222.5
+TARGET_WEIGHT_MAX_G = 230.5
+TARGET_WEIGHT_TOLERANCE_PCT = 3
 
 # ── UI stabilization (UI only) ──
-SNAP_BAND_G = 2.6
+SNAP_BAND_G = 2.5
 
 # ── Auto-retare (optional; can briefly block when it runs) ──
 TARE_SAMPLES = 20
@@ -412,6 +412,10 @@ class HX711Module(QObject):
     @property
     def is_running(self) -> bool:
         return self._is_running
+
+    @property
+    def captured_count(self) -> int:
+        return int(self._captured_count)
 
     def start(self):
         if self._is_running:

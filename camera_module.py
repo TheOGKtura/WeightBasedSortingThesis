@@ -34,7 +34,7 @@ class CameraThread(QThread):
     frame_ready = Signal(QImage)
     error_occurred = Signal(str)
 
-    def __init__(self, ocr_module, resolution=(1068, 768), rotation=90, lens_position=1, parent=None):
+    def __init__(self, ocr_module, resolution=(1920, 1080), rotation=90, lens_position=1, parent=None):
         super().__init__(parent)
         self.resolution = resolution
         self.rotation = rotation  # 0, 90, 180, 270

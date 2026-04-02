@@ -5,23 +5,34 @@ Wires together: gui.py, login_page, camera, clock, hx711, ocr, and roles.
 
 import os
 import sys
+from datetime import datetime
+import re
 
 # ── Platform & Touch Configuration (must be before any Qt imports) ──
 os.environ["QT_QPA_PLATFORM"] = "wayland"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 os.environ["QT_SCALE_FACTOR"] = "1"
 
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 from PySide6.QtCore import Qt, QTimer
 
 from gui import Ui_MainWindow
 from login_page import LoginPage
-from roles import has_permission
+from roles import get_user_count_quota, has_permission
 from camera_module import CameraModule
 from clock_module import ClockModule
 from hx711_module import HX711Module
 from relay_mqtt_controller import RelayMqttConfig, RelayMqttController, RelayCommandMapping
 from firebase_rtdb_module import FirebaseRTDBClient
+from servo_reject_module import ServoRejectController
 
 
 RELAY_MQTT_HOST = os.environ.get("RELAY_MQTT_HOST", "127.0.0.1")
@@ -30,6 +41,9 @@ RELAY_RUN_SECONDS = float(os.environ.get("RELAY_RUN_SECONDS", "6"))
 RELAY_PAYLOAD_RUN = os.environ.get("RELAY_PAYLOAD_RUN", "OFF")
 RELAY_PAYLOAD_STOP = os.environ.get("RELAY_PAYLOAD_STOP", "ON")
 RELAY_MQTT_CLIENT_ID = os.environ.get("RELAY_MQTT_CLIENT_ID", f"pyside6-relay-gui-{os.getpid()}")
+SERVO_PIN = int(os.environ.get("SERVO_PIN", "17"))
+PRODUCTION_SHIFT = os.environ.get("PRODUCTION_SHIFT", "morning").strip() or "morning"
+PRODUCTION_LINE = int(os.environ.get("PRODUCTION_LINE", "0"))
 
 
 class MainWindow(QMainWindow):
@@ -37,6 +51,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+
+        self.product_options = [
+            "CDO Crispy Burger 228g",
+            "CDO Tocino 225g",
+        ]
 
         # ── Enable touch input ──
         self.setAttribute(Qt.WA_AcceptTouchEvents, True)
@@ -50,6 +69,16 @@ class MainWindow(QMainWindow):
         self._last_product_name = ""
         self._green_blinks_left = 0
         self._red_blinks_left = 0
+        self._selected_product_name = ""
+        self._pending_permissions = {}
+        self._user_count_quota = None
+        self._quota_reached = False
+        self._quota_date_key = ""
+        self._daily_count = 0
+        self._operator_accept_count = 0
+        self._operator_reject_count = 0
+        self._production_shift = PRODUCTION_SHIFT
+        self._production_line = PRODUCTION_LINE
 
         # ── Load QSS ──
         qss_path = os.path.join(os.path.dirname(__file__), "login_page.qss")
@@ -59,6 +88,9 @@ class MainWindow(QMainWindow):
         # ── Insert login page at index 0 ──
         self.login_page = LoginPage()
         self.ui.stackedWidget.insertWidget(0, self.login_page)
+
+        self.product_page = self._build_product_selection_page()
+        self.ui.stackedWidget.insertWidget(1, self.product_page)
 
         self.ui.stackedWidget.setCurrentIndex(0)
 
@@ -86,6 +118,12 @@ class MainWindow(QMainWindow):
         )
         self.relay.start()
 
+        self.reject_servo = ServoRejectController(
+            pin=SERVO_PIN,
+            move_settle_seconds=1.0,
+            push_hold_seconds=0.0,
+        )
+
         self.firebase = FirebaseRTDBClient.from_env()
         self.firebase.set_state(
             "app_started",
@@ -95,6 +133,8 @@ class MainWindow(QMainWindow):
                 "relay_mqtt_client_id": RELAY_MQTT_CLIENT_ID,
                 "relay_payload_run": RELAY_PAYLOAD_RUN,
                 "relay_payload_stop": RELAY_PAYLOAD_STOP,
+                "servo_pin": SERVO_PIN,
+                "servo_enabled": self.reject_servo.is_enabled,
             },
         )
 
@@ -132,6 +172,7 @@ class MainWindow(QMainWindow):
         # Start / Stop toggle
         self.ui.pushButton_start.clicked.connect(self.toggle_hx711)
         self.ui.pushButton_calibrate.setVisible(False)
+        self._update_quota_label()
 
     # ─────────────────────────────────────
     #  Login
@@ -139,6 +180,15 @@ class MainWindow(QMainWindow):
     def on_login_success(self, username: str, role: str, permissions: dict):
         self.current_user = username
         self.current_role = role
+        self._pending_permissions = dict(permissions)
+        self._user_count_quota = get_user_count_quota(username)
+        self._quota_date_key = self._current_date_key()
+        self._daily_count = self.firebase.get_daily_quota_count(username, self._quota_date_key)
+        self._quota_reached = bool(
+            self._user_count_quota is not None and self._daily_count >= int(self._user_count_quota)
+        )
+        self._operator_accept_count = 0
+        self._operator_reject_count = 0
 
         self.firebase.set_state(
             "user_logged_in",
@@ -147,24 +197,123 @@ class MainWindow(QMainWindow):
                 "role": role,
             },
         )
+        self.firebase.push_shift(self._production_shift, self._production_line)
 
         self.ui.label_account.setText(f"  {username}  ({role})")
         self.ui.label_account.adjustSize()
+        self._update_quota_label()
 
-        self.apply_permissions(permissions)
-        self.camera.start()
-        self.hx711.reset()
-        self.hx711.start()
-        self.ui.pushButton_start.setText("Stop")
-        # Keep conveyor in safe OFF state until a qualified item triggers RUN.
-        self._ensure_relay_on("login_success")
-        self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
+        self.ui.stackedWidget.setCurrentWidget(self.product_page)
 
         self.firebase.push_event(
             "session_started",
             {
                 "username": username,
                 "role": role,
+                "count_quota": self._user_count_quota,
+                "quota_date": self._quota_date_key,
+                "count_current_daily": self._daily_count,
+            },
+        )
+        self.firebase.set_state(
+            "session_quota",
+            {
+                "username": username,
+                "role": role,
+                "count_quota": self._user_count_quota,
+                "count_current": int(self._daily_count),
+                "count_current_session": int(self.hx711.captured_count),
+                "quota_date": self._quota_date_key,
+                "quota_reached": bool(self._quota_reached),
+            },
+        )
+
+    def _build_product_selection_page(self) -> QWidget:
+        page = QWidget()
+        root_layout = QVBoxLayout(page)
+        root_layout.setContentsMargins(40, 30, 40, 30)
+        root_layout.setSpacing(18)
+
+        title = QLabel("Select Product")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 34px; font-weight: 700;")
+
+        subtitle = QLabel("Choose one product before starting the session")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("font-size: 18px;")
+
+        root_layout.addStretch(1)
+        root_layout.addWidget(title)
+        root_layout.addWidget(subtitle)
+        root_layout.addSpacing(10)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(16)
+
+        for product_name in self.product_options:
+            btn = QPushButton(product_name)
+            btn.setMinimumHeight(120)
+            btn.setStyleSheet("font-size: 24px; font-weight: 600;")
+            btn.clicked.connect(lambda checked=False, p=product_name: self._on_product_selected(p))
+            button_row.addWidget(btn)
+
+        root_layout.addLayout(button_row)
+        root_layout.addStretch(2)
+        return page
+
+    def _on_product_selected(self, product_name: str):
+        selected = product_name.strip()
+        if not selected:
+            return
+
+        self._selected_product_name = selected
+        self._quota_reached = bool(
+            self._user_count_quota is not None and self._daily_count >= int(self._user_count_quota)
+        )
+        self.ui.label_product.setText(self._selected_product_name)
+        self._update_quota_label()
+
+        self.apply_permissions(self._pending_permissions)
+        self.camera.start()
+        self.hx711.reset()
+        if self._quota_reached:
+            self.ui.pushButton_start.setText("Start")
+            self.ui.pushButton_start.setEnabled(False)
+            self.ui.pushButton_start.setToolTip("Daily quota reached")
+        else:
+            self.hx711.start()
+            self.ui.pushButton_start.setText("Stop")
+        # Keep conveyor in safe OFF state until a qualified item triggers RUN.
+        self._ensure_relay_on("product_selected")
+        self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
+
+        self.firebase.push_event(
+            "product_selected",
+            {
+                "product_name": self._selected_product_name,
+                "username": self.current_user,
+                "role": self.current_role,
+            },
+        )
+        self.firebase.set_state(
+            "current_product",
+            {
+                "product_name": self._selected_product_name,
+                "username": self.current_user,
+                "role": self.current_role,
+            },
+        )
+        self.firebase.set_state(
+            "session_quota",
+            {
+                "username": self.current_user,
+                "role": self.current_role,
+                "count_quota": self._user_count_quota,
+                "count_current": int(self._daily_count),
+                "count_current_session": int(self.hx711.captured_count),
+                "quota_date": self._quota_date_key,
+                "quota_reached": bool(self._quota_reached),
+                "product_name": self._selected_product_name,
             },
         )
 
@@ -183,6 +332,18 @@ class MainWindow(QMainWindow):
     #  HX711 Start / Stop Toggle
     # ─────────────────────────────────────
     def toggle_hx711(self):
+        if self._quota_reached:
+            self.firebase.push_event(
+                "quota_blocked_start",
+                {
+                    "username": self.current_user,
+                    "role": self.current_role,
+                    "count_quota": self._user_count_quota,
+                    "count_current": int(self.hx711.captured_count),
+                },
+            )
+            return
+
         if self.hx711.is_running:
             self.hx711.stop()
             self.ui.pushButton_start.setText("Start")
@@ -198,6 +359,9 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────
     def on_product_detected(self, product_name: str):
         """Called when OCR detects a product name from camera feed."""
+        if self._selected_product_name:
+            return
+
         self.ui.label_product.setText(product_name)
 
         normalized = product_name.strip().lower()
@@ -217,26 +381,98 @@ class MainWindow(QMainWindow):
         print(f"  ╚═══════════════════════════════════════╝\n")
 
     def on_weight_finalized(self, weight: float):
+        self._ensure_quota_day_context()
         accepted = bool(self.hx711.is_weight_accepted(weight))
+        product_name = self.ui.label_product.text().strip() or "Unknown"
+        standard = self._extract_standard_weight(product_name)
+        if standard is None:
+            standard = int(round(float(weight)))
+        if accepted:
+            self._operator_accept_count += 1
+        else:
+            self._operator_reject_count += 1
+
+        total_finalized = self._operator_accept_count + self._operator_reject_count
+        self.firebase.push_event(
+            "operator_weight_finalized",
+            {
+                "username": self.current_user,
+                "role": self.current_role,
+                "quota_date": self._quota_date_key,
+                "product_name": product_name,
+                "weight_g": float(weight),
+                "accepted": accepted,
+                "accepted_count": int(self._operator_accept_count),
+                "rejected_count": int(self._operator_reject_count),
+                "total_finalized": int(total_finalized),
+            },
+        )
+
         self.firebase.push_event(
             "weight_finalized",
             {
                 "weight_g": float(weight),
                 "accepted": accepted,
+                "product_name": product_name,
                 "username": self.current_user,
                 "role": self.current_role,
+                "quota_date": self._quota_date_key,
+                "accepted_count": int(self._operator_accept_count),
+                "rejected_count": int(self._operator_reject_count),
+                "total_finalized": int(total_finalized),
             },
         )
+        self.firebase.push_record(
+            {
+                "product_name": product_name,
+                "standard": int(standard),
+                "reading": int(round(float(weight))),
+                "production_shift": self._production_shift,
+                "production_line": int(self._production_line),
+                "operator": str(self.current_user or ""),
+                "time": int(datetime.now().timestamp()),
+                "accepted": bool(accepted),
+            }
+        )
         if not accepted:
+            self._relay_stop_timer.stop()
+            self._relay_cycle_active = False
+            self._relay_queue_ms = 0
+            self._ensure_relay_on("weight_rejected")
+            self.reject_servo.reject_cycle()
             self._blink_red()
+
+    @staticmethod
+    def _extract_standard_weight(product_name: str) -> int | None:
+        match = re.search(r"(\d+)\s*g\b", str(product_name or ""), flags=re.IGNORECASE)
+        if not match:
+            return None
+        try:
+            return int(match.group(1))
+        except (TypeError, ValueError):
+            return None
 
     # ─────────────────────────────────────
     #  Relay by Finalized Weight
     # ─────────────────────────────────────
     def on_weight_captured(self, weight: float):
         """Add relay runtime for each finalized qualified item."""
+        self._ensure_quota_day_context()
         is_calibration_mode = False
         product_name = self.ui.label_product.text().strip() or "Unknown"
+        session_count = int(self.hx711.captured_count)
+        daily_count = self.firebase.increment_daily_quota_count(
+            self.current_user,
+            self._quota_date_key,
+            delta=1,
+            role=self.current_role,
+            product_name=product_name,
+            quota=self._user_count_quota,
+        )
+        if daily_count <= 0:
+            daily_count = int(self._daily_count) + 1
+        self._daily_count = int(daily_count)
+        self._update_quota_label(self._daily_count)
 
         self.firebase.push_event(
             "weight_qualified",
@@ -249,6 +485,23 @@ class MainWindow(QMainWindow):
                 "relay_cycle_active": self._relay_cycle_active,
                 "relay_queue_ms": self._relay_queue_ms,
                 "is_calibration_mode": is_calibration_mode,
+                "count_current": int(self._daily_count),
+                "count_current_session": session_count,
+                "count_quota": self._user_count_quota,
+                "quota_date": self._quota_date_key,
+            },
+        )
+        self.firebase.set_state(
+            "session_quota",
+            {
+                "username": self.current_user,
+                "role": self.current_role,
+                "product_name": product_name,
+                "count_quota": self._user_count_quota,
+                "count_current": int(self._daily_count),
+                "count_current_session": session_count,
+                "quota_date": self._quota_date_key,
+                "quota_reached": bool(self._quota_reached),
             },
         )
 
@@ -279,6 +532,45 @@ class MainWindow(QMainWindow):
         print(
             f"[RELAY] Qualified weight ({weight:.1f} g). "
             f"Added {RELAY_RUN_SECONDS:.1f}s, remaining {self._relay_queue_ms / 1000.0:.1f}s"
+        )
+
+        if self._user_count_quota is not None and self._daily_count >= self._user_count_quota:
+            self._handle_count_quota_reached(self._daily_count, product_name)
+
+    def _handle_count_quota_reached(self, captured_count: int, product_name: str):
+        if self._quota_reached:
+            return
+
+        self._quota_reached = True
+        self.hx711.stop()
+        self.ui.pushButton_start.setText("Start")
+        self.ui.pushButton_start.setEnabled(False)
+        self.ui.pushButton_start.setToolTip("Daily quota reached")
+        self._update_quota_label(captured_count)
+
+        self.firebase.push_event(
+            "quota_reached",
+            {
+                "username": self.current_user,
+                "role": self.current_role,
+                "product_name": product_name,
+                "count_current": int(captured_count),
+                "count_quota": self._user_count_quota,
+                "quota_date": self._quota_date_key,
+            },
+        )
+        self.firebase.set_state(
+            "session_quota",
+            {
+                "username": self.current_user,
+                "role": self.current_role,
+                "product_name": product_name,
+                "count_quota": self._user_count_quota,
+                "count_current": int(captured_count),
+                "count_current_session": int(self.hx711.captured_count),
+                "quota_date": self._quota_date_key,
+                "quota_reached": True,
+            },
         )
 
     def _end_relay_cycle(self):
@@ -365,8 +657,71 @@ class MainWindow(QMainWindow):
                 "relay_cycle_active": self._relay_cycle_active,
                 "relay_queue_ms": self._relay_queue_ms,
                 "current_product": self.ui.label_product.text().strip(),
+                "count_current": int(self._daily_count),
+                "count_current_session": int(self.hx711.captured_count),
+                "count_quota": self._user_count_quota,
+                "quota_date": self._quota_date_key,
+                "quota_reached": bool(self._quota_reached),
             },
         )
+
+    def _update_quota_label(self, current_count: int | None = None):
+        if not hasattr(self.ui, "label_quota"):
+            return
+
+        count = int(self._daily_count) if current_count is None else int(current_count)
+        quota = self._user_count_quota
+        if quota is None:
+            quota_text = f"Daily: {count}  |  Quota: None"
+        else:
+            status = " (Reached)" if self._quota_reached else ""
+            quota_text = f"Daily: {count}/{int(quota)}{status}"
+
+        self.ui.label_quota.setText(quota_text)
+        self.firebase.set_state(
+            "quota_display",
+            {
+                "username": self.current_user,
+                "role": self.current_role,
+                "product_name": self.ui.label_product.text().strip(),
+                "count_current": count,
+                "count_current_session": int(self.hx711.captured_count),
+                "count_quota": quota,
+                "quota_date": self._quota_date_key,
+                "quota_reached": bool(self._quota_reached),
+                "quota_text": quota_text,
+            },
+        )
+
+    def _current_date_key(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def _ensure_quota_day_context(self):
+        if not self.current_user:
+            return
+        today_key = self._current_date_key()
+        if today_key == self._quota_date_key:
+            return
+
+        self._quota_date_key = today_key
+        self._daily_count = self.firebase.get_daily_quota_count(self.current_user, self._quota_date_key)
+        self._operator_accept_count = 0
+        self._operator_reject_count = 0
+        self._quota_reached = bool(
+            self._user_count_quota is not None and self._daily_count >= int(self._user_count_quota)
+        )
+        if self._quota_reached:
+            self.hx711.stop()
+            self.ui.pushButton_start.setText("Start")
+            self.ui.pushButton_start.setEnabled(False)
+            self.ui.pushButton_start.setToolTip("Daily quota reached")
+        else:
+            self.apply_permissions(self._pending_permissions)
+            if self.hx711.is_running:
+                self.ui.pushButton_start.setText("Stop")
+            else:
+                self.ui.pushButton_start.setText("Start")
+        self._update_quota_label(self._daily_count)
 
     # ─────────────────────────────────────
     #  Logout — returns to login page
@@ -390,9 +745,30 @@ class MainWindow(QMainWindow):
         self.camera.stop()
         self.current_user = None
         self.current_role = None
+        self._selected_product_name = ""
+        self._pending_permissions = {}
+        self._user_count_quota = None
+        self._quota_reached = False
+        self._quota_date_key = ""
+        self._daily_count = 0
+        self._operator_accept_count = 0
+        self._operator_reject_count = 0
+        self.firebase.set_state("current_product", {"product_name": ""})
+        self.firebase.set_state(
+            "session_quota",
+            {
+                "count_quota": None,
+                "count_current": 0,
+                "count_current_session": 0,
+                "quota_date": "",
+                "quota_reached": False,
+                "product_name": "",
+            },
+        )
         self.ui.pushButton_start.setText("Start")
         self.ui.label_account.setText("Not logged in")
         self.ui.label_product.setText("No Product Detected")
+        self._update_quota_label(0)
         self.login_page.clear_fields()
         self.ui.stackedWidget.setCurrentIndex(0)
 
@@ -406,6 +782,7 @@ class MainWindow(QMainWindow):
         self._ensure_relay_on("exit_app")
         self._relay_queue_ms = 0
         self.relay.stop()
+        self.reject_servo.cleanup()
         self.hx711.stop()
         self.camera.stop()
         self.clock.stop()
@@ -421,6 +798,7 @@ class MainWindow(QMainWindow):
         self._ensure_relay_on("close_event")
         self._relay_queue_ms = 0
         self.relay.stop()
+        self.reject_servo.cleanup()
         self.hx711.stop()
         self.camera.stop()
         self.clock.stop()
