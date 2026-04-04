@@ -49,7 +49,7 @@ try:
             duty = angle_to_duty(angle)
             pwm.ChangeDutyCycle(duty)
             print(f"Moving servo to {angle}° (Duty: {duty:.2f}%)")
-            time.sleep(3)  # allow servo to move
+            time.sleep(1)  # allow servo to move
             pwm.ChangeDutyCycle(0)  # stop sending signal to prevent jitter
         else:
             print("Angle out of range! Must be 0-180°")

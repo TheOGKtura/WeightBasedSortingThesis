@@ -29,7 +29,7 @@ from login_page import LoginPage
 from roles import get_user_count_quota, has_permission
 from camera_module import CameraModule
 from clock_module import ClockModule
-from hx711_module import HX711Module
+from hx711_module import HX711Module, get_target_range_for_product
 from relay_mqtt_controller import RelayMqttConfig, RelayMqttController, RelayCommandMapping
 from firebase_rtdb_module import FirebaseRTDBClient
 from servo_reject_module import ServoRejectController
@@ -44,6 +44,15 @@ RELAY_MQTT_CLIENT_ID = os.environ.get("RELAY_MQTT_CLIENT_ID", f"pyside6-relay-gu
 SERVO_PIN = int(os.environ.get("SERVO_PIN", "17"))
 PRODUCTION_SHIFT = os.environ.get("PRODUCTION_SHIFT", "morning").strip() or "morning"
 PRODUCTION_LINE = int(os.environ.get("PRODUCTION_LINE", "0"))
+PRODUCT_CDO_CRISPY_BURGER = "CDO Crispy Burger"
+PRODUCT_CDO_PREMIUM_TONKATSU = "CDO Premium Tonkatsu"
+PRODUCT_STANDARD_BY_NAME = {
+    PRODUCT_CDO_CRISPY_BURGER.lower(): 228,
+    PRODUCT_CDO_PREMIUM_TONKATSU.lower(): 420,
+}
+DEFAULT_SERVO_MOVE_SETTLE_SECONDS = 1.0
+PREMIUM_SERVO_PUSH_MOVE_SECONDS = 4.0
+DEFAULT_SERVO_PUSH_HOLD_SECONDS = 0.0
 
 
 class MainWindow(QMainWindow):
@@ -53,8 +62,8 @@ class MainWindow(QMainWindow):
         self.ui.setupUi(self)
 
         self.product_options = [
-            "CDO Crispy Burger 228g",
-            "CDO Tocino 225g",
+            PRODUCT_CDO_CRISPY_BURGER,
+            PRODUCT_CDO_PREMIUM_TONKATSU,
         ]
 
         # ── Enable touch input ──
@@ -120,8 +129,8 @@ class MainWindow(QMainWindow):
 
         self.reject_servo = ServoRejectController(
             pin=SERVO_PIN,
-            move_settle_seconds=1.0,
-            push_hold_seconds=0.0,
+            move_settle_seconds=DEFAULT_SERVO_MOVE_SETTLE_SECONDS,
+            push_hold_seconds=DEFAULT_SERVO_PUSH_HOLD_SECONDS,
         )
 
         self.firebase = FirebaseRTDBClient.from_env()
@@ -267,6 +276,7 @@ class MainWindow(QMainWindow):
             return
 
         self._selected_product_name = selected
+        self._apply_product_profiles(selected)
         self._quota_reached = bool(
             self._user_count_quota is not None and self._daily_count >= int(self._user_count_quota)
         )
@@ -316,6 +326,12 @@ class MainWindow(QMainWindow):
                 "product_name": self._selected_product_name,
             },
         )
+
+    def _apply_product_profiles(self, product_name: str):
+        target_min_g, target_max_g = get_target_range_for_product(product_name)
+        self.hx711.set_target_range(target_min_g, target_max_g)
+        self.reject_servo.move_settle_seconds = DEFAULT_SERVO_MOVE_SETTLE_SECONDS
+        self.reject_servo.push_hold_seconds = DEFAULT_SERVO_PUSH_HOLD_SECONDS
 
     def apply_permissions(self, permissions: dict):
         button_map = {
@@ -426,7 +442,7 @@ class MainWindow(QMainWindow):
             {
                 "product_name": product_name,
                 "standard": int(standard),
-                "reading": int(round(float(weight))),
+                "reading": round(float(weight), 2),
                 "production_shift": self._production_shift,
                 "production_line": int(self._production_line),
                 "operator": str(self.current_user or ""),
@@ -439,11 +455,22 @@ class MainWindow(QMainWindow):
             self._relay_cycle_active = False
             self._relay_queue_ms = 0
             self._ensure_relay_on("weight_rejected")
-            self.reject_servo.reject_cycle()
+            if self._selected_product_name == PRODUCT_CDO_PREMIUM_TONKATSU:
+                self.reject_servo.reject_cycle(
+                    push_move_seconds=PREMIUM_SERVO_PUSH_MOVE_SECONDS,
+                    return_move_seconds=DEFAULT_SERVO_MOVE_SETTLE_SECONDS,
+                    push_hold_seconds=0.0,
+                )
+            else:
+                self.reject_servo.reject_cycle()
             self._blink_red()
 
     @staticmethod
     def _extract_standard_weight(product_name: str) -> int | None:
+        mapped_standard = PRODUCT_STANDARD_BY_NAME.get(str(product_name or "").strip().lower())
+        if mapped_standard is not None:
+            return int(mapped_standard)
+
         match = re.search(r"(\d+)\s*g\b", str(product_name or ""), flags=re.IGNORECASE)
         if not match:
             return None

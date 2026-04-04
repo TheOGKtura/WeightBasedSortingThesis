@@ -66,14 +66,21 @@ class ServoRejectController:
         self._move(0)
         print("[SERVO] Home at 0")
 
-    def reject_cycle(self):
+    def reject_cycle(
+        self,
+        push_move_seconds: float | None = None,
+        return_move_seconds: float | None = None,
+        push_hold_seconds: float | None = None,
+    ):
         if not self._enabled:
             print("[SERVO] Reject cycle skipped (disabled)")
             return
         print("[SERVO] Reject cycle: 180 -> 0")
-        self._move(180)
-        time.sleep(self.push_hold_seconds)
-        self._move(0)
+        self._move(180, hold_seconds=push_move_seconds)
+        hold = self.push_hold_seconds if push_hold_seconds is None else float(push_hold_seconds)
+        if hold > 0:
+            time.sleep(hold)
+        self._move(0, hold_seconds=return_move_seconds)
 
     def cleanup(self):
         if not self._enabled:

@@ -95,8 +95,13 @@ TRIM_FRACTION = 0.10         # trim 10% extremes after MAD-filter
 
 # ── Target qualification for accepted items ──
 TARGET_WEIGHT_MIN_G = 222.5
-TARGET_WEIGHT_MAX_G = 230.5
+TARGET_WEIGHT_MAX_G = 232.5
 TARGET_WEIGHT_TOLERANCE_PCT = 3
+
+PRODUCT_TARGET_RANGES = {
+    "CDO Crispy Burger 228g": (TARGET_WEIGHT_MIN_G, TARGET_WEIGHT_MAX_G),
+    "CDO Premium Tonkatsu 420g": (411.5, 428.0),
+}
 
 # ── UI stabilization (UI only) ──
 SNAP_BAND_G = 2.5
@@ -210,6 +215,14 @@ def is_weight_in_target_range(weight: float) -> bool:
     return TARGET_WEIGHT_MIN_G <= float(weight) <= TARGET_WEIGHT_MAX_G
 
 
+def get_target_range_for_product(product_name: str) -> tuple[float, float]:
+    name = str(product_name or "").strip()
+    if name in PRODUCT_TARGET_RANGES:
+        lo, hi = PRODUCT_TARGET_RANGES[name]
+        return float(lo), float(hi)
+    return float(TARGET_WEIGHT_MIN_G), float(TARGET_WEIGHT_MAX_G)
+
+
 # ── State labels ──
 IDLE = "IDLE"
 CAPTURING = "CAPTURING"
@@ -227,6 +240,8 @@ class HX711Thread(QThread):
         super().__init__(parent)
         self._running = False
         self._lock = threading.Lock()
+        self._target_min_g = float(TARGET_WEIGHT_MIN_G)
+        self._target_max_g = float(TARGET_WEIGHT_MAX_G)
 
         # UI stabilization
         self._last_stable_weight = 0.0
@@ -248,6 +263,27 @@ class HX711Thread(QThread):
         self._held_weight = 0.0
         self._empty_run = 0
         self._final_sent = False
+
+    def set_target_range(self, min_g: float, max_g: float):
+        lo = float(min_g)
+        hi = float(max_g)
+        if not _is_finite(lo) or not _is_finite(hi):
+            return
+        if lo > hi:
+            lo, hi = hi, lo
+        with self._lock:
+            self._target_min_g = lo
+            self._target_max_g = hi
+
+    def get_target_range(self) -> tuple[float, float]:
+        with self._lock:
+            return float(self._target_min_g), float(self._target_max_g)
+
+    def _is_weight_in_target_range(self, weight: float) -> bool:
+        if not _is_finite(weight):
+            return False
+        lo, hi = self.get_target_range()
+        return lo <= float(weight) <= hi
 
     def run(self):
         self._running = True
@@ -329,7 +365,7 @@ class HX711Thread(QThread):
 
                         if not self._final_sent:
                             self.weight_finalized.emit(final_w)
-                            if is_weight_in_target_range(final_w):
+                            if self._is_weight_in_target_range(final_w):
                                 self.weight_qualified.emit(final_w)
                             self._final_sent = True
 
@@ -408,6 +444,8 @@ class HX711Module(QObject):
         self.thread = None
         self._is_running = False
         self._captured_count = 0
+        self._target_min_g = float(TARGET_WEIGHT_MIN_G)
+        self._target_max_g = float(TARGET_WEIGHT_MAX_G)
 
     @property
     def is_running(self) -> bool:
@@ -422,6 +460,7 @@ class HX711Module(QObject):
             return
 
         self.thread = HX711Thread()
+        self.thread.set_target_range(self._target_min_g, self._target_max_g)
         self.thread.weight_display_ready.connect(self._on_weight)
         self.thread.weight_finalized.connect(self._on_weight_finalized)
         self.thread.weight_qualified.connect(self._on_weight_qualified)
@@ -527,9 +566,27 @@ class HX711Module(QObject):
             if was_running:
                 self.start()
 
-    @staticmethod
-    def is_weight_accepted(weight: float) -> bool:
-        return is_weight_in_target_range(weight)
+    def set_target_range(self, min_g: float, max_g: float):
+        lo = float(min_g)
+        hi = float(max_g)
+        if not _is_finite(lo) or not _is_finite(hi):
+            return
+        if lo > hi:
+            lo, hi = hi, lo
+
+        self._target_min_g = lo
+        self._target_max_g = hi
+        if self.thread is not None:
+            self.thread.set_target_range(lo, hi)
+
+    def get_target_range(self) -> tuple[float, float]:
+        return float(self._target_min_g), float(self._target_max_g)
+
+    def is_weight_accepted(self, weight: float) -> bool:
+        if not _is_finite(weight):
+            return False
+        lo, hi = self.get_target_range()
+        return lo <= float(weight) <= hi
 
     def _on_weight_finalized(self, weight: float):
         # Finalized is emitted for all items; tally is handled on qualified-only path.
