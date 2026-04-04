@@ -34,7 +34,7 @@ from hx711 import HX711 as HX711Driver
 # ── Pins / calibration ──
 HX711_DOUT_PIN = 5
 HX711_SCK_PIN = 6
-DEFAULT_REFERENCE_UNIT = 219.949121
+DEFAULT_REFERENCE_UNIT = 229.949121
 _CALIBRATION_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "hx711_calibration.json")
 
 
@@ -99,8 +99,8 @@ TARGET_WEIGHT_MAX_G = 232.5
 TARGET_WEIGHT_TOLERANCE_PCT = 3
 
 PRODUCT_TARGET_RANGES = {
-    "CDO Crispy Burger 228g": (TARGET_WEIGHT_MIN_G, TARGET_WEIGHT_MAX_G),
-    "CDO Premium Tonkatsu 420g": (411.5, 428.0),
+    "CDO Crispy Burger": (TARGET_WEIGHT_MIN_G, TARGET_WEIGHT_MAX_G),
+    "CDO Premium Tonkatsu": (411.5, 428.0),
 }
 
 # ── UI stabilization (UI only) ──
@@ -220,6 +220,14 @@ def get_target_range_for_product(product_name: str) -> tuple[float, float]:
     if name in PRODUCT_TARGET_RANGES:
         lo, hi = PRODUCT_TARGET_RANGES[name]
         return float(lo), float(hi)
+
+    lowered = name.lower()
+    if lowered.endswith(" 228g") or lowered.endswith(" 420g"):
+        base_name = name.rsplit(" ", 1)[0].strip()
+        if base_name in PRODUCT_TARGET_RANGES:
+            lo, hi = PRODUCT_TARGET_RANGES[base_name]
+            return float(lo), float(hi)
+
     return float(TARGET_WEIGHT_MIN_G), float(TARGET_WEIGHT_MAX_G)
 
 

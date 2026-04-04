@@ -1,12 +1,14 @@
 """
 Application entry point.
-Wires together: gui.py, login_page, camera, clock, hx711, ocr, and roles.
+Wires together: gui.py, login_page, camera, clock, hx711, ocr, barcode scanner, and roles.
 """
 
 import os
 import sys
 from datetime import datetime
 import re
+import cv2
+import logging
 
 # ── Platform & Touch Configuration (must be before any Qt imports) ──
 os.environ["QT_QPA_PLATFORM"] = "wayland"
@@ -42,7 +44,7 @@ RELAY_PAYLOAD_RUN = os.environ.get("RELAY_PAYLOAD_RUN", "OFF")
 RELAY_PAYLOAD_STOP = os.environ.get("RELAY_PAYLOAD_STOP", "ON")
 RELAY_MQTT_CLIENT_ID = os.environ.get("RELAY_MQTT_CLIENT_ID", f"pyside6-relay-gui-{os.getpid()}")
 SERVO_PIN = int(os.environ.get("SERVO_PIN", "17"))
-PRODUCTION_SHIFT = os.environ.get("PRODUCTION_SHIFT", "morning").strip() or "morning"
+PRODUCTION_SHIFT = os.environ.get("PRODUCTION_SHIFT", "auto").strip() or "auto"
 PRODUCTION_LINE = int(os.environ.get("PRODUCTION_LINE", "0"))
 PRODUCT_CDO_CRISPY_BURGER = "CDO Crispy Burger"
 PRODUCT_CDO_PREMIUM_TONKATSU = "CDO Premium Tonkatsu"
@@ -50,9 +52,26 @@ PRODUCT_STANDARD_BY_NAME = {
     PRODUCT_CDO_CRISPY_BURGER.lower(): 228,
     PRODUCT_CDO_PREMIUM_TONKATSU.lower(): 420,
 }
+
+# Barcode to Product Mapping
+BARCODE_TO_PRODUCT_MAP = {
+    "CODE128:263769919130478": {
+        "product_name": PRODUCT_CDO_CRISPY_BURGER,
+        "product_quota": 21,
+    },      
+    "CODE128:263930646130504": {
+        "product_name": PRODUCT_CDO_PREMIUM_TONKATSU,
+        "product_quota": 12,
+    },
+}
+
 DEFAULT_SERVO_MOVE_SETTLE_SECONDS = 1.0
-PREMIUM_SERVO_PUSH_MOVE_SECONDS = 4.0
+PREMIUM_SERVO_PUSH_MOVE_SECONDS = 6.0
 DEFAULT_SERVO_PUSH_HOLD_SECONDS = 0.0
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -60,11 +79,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
-
-        self.product_options = [
-            PRODUCT_CDO_CRISPY_BURGER,
-            PRODUCT_CDO_PREMIUM_TONKATSU,
-        ]
 
         # ── Enable touch input ──
         self.setAttribute(Qt.WA_AcceptTouchEvents, True)
@@ -75,7 +89,6 @@ class MainWindow(QMainWindow):
         self._relay_connected = False
         self._relay_state = None
         self._relay_queue_ms = 0
-        self._last_product_name = ""
         self._green_blinks_left = 0
         self._red_blinks_left = 0
         self._selected_product_name = ""
@@ -88,6 +101,7 @@ class MainWindow(QMainWindow):
         self._operator_reject_count = 0
         self._production_shift = PRODUCTION_SHIFT
         self._production_line = PRODUCTION_LINE
+        self._last_barcode_text = ""
 
         # ── Load QSS ──
         qss_path = os.path.join(os.path.dirname(__file__), "login_page.qss")
@@ -98,15 +112,13 @@ class MainWindow(QMainWindow):
         self.login_page = LoginPage()
         self.ui.stackedWidget.insertWidget(0, self.login_page)
 
-        self.product_page = self._build_product_selection_page()
-        self.ui.stackedWidget.insertWidget(1, self.product_page)
-
         self.ui.stackedWidget.setCurrentIndex(0)
 
         # ── Modules ──
         self.camera = CameraModule(
             self.ui.frame_camera,
-            ocr_callback=self.on_product_detected
+            barcode_callback=self.on_barcode_detected,
+            barcode_frame_callback=self._on_barcode_frame_ready,
         )
         self.clock = ClockModule(self.ui.label_uptime, self.ui.label_date)
         self.hx711 = HX711Module(
@@ -183,6 +195,28 @@ class MainWindow(QMainWindow):
         self.ui.pushButton_calibrate.setVisible(False)
         self._update_quota_label()
 
+    @staticmethod
+    def _shift_from_hour(hour_24: int) -> str:
+        # Requested shift windows:
+        # 07:00-12:59 -> morning
+        # 13:00-18:59 -> afternoon
+        # 19:00-23:59 -> evening
+        if 7 <= hour_24 <= 12:
+            return "morning"
+        if 13 <= hour_24 <= 18:
+            return "afternoon"
+        if 19 <= hour_24 <= 23:
+            return "evening"
+        # Keep a safe default for out-of-window hours (00:00-06:59).
+        return "morning"
+
+    def _resolve_current_shift(self, ts: int | None = None) -> str:
+        ref_dt = datetime.fromtimestamp(int(ts)) if ts is not None else datetime.now()
+        env_shift = str(PRODUCTION_SHIFT or "").strip().lower()
+        if env_shift and env_shift != "auto":
+            return env_shift
+        return self._shift_from_hour(ref_dt.hour)
+
     # ─────────────────────────────────────
     #  Login
     # ─────────────────────────────────────
@@ -206,13 +240,19 @@ class MainWindow(QMainWindow):
                 "role": role,
             },
         )
-        self.firebase.push_shift(self._production_shift, self._production_line)
+        now_ts = int(datetime.now().timestamp())
+        self._production_shift = self._resolve_current_shift(now_ts)
+        self.firebase.push_shift(self._production_shift, self._production_line, at_time=now_ts)
 
         self.ui.label_account.setText(f"  {username}  ({role})")
         self.ui.label_account.adjustSize()
         self._update_quota_label()
 
-        self.ui.stackedWidget.setCurrentWidget(self.product_page)
+        # Start camera and wait for barcode to auto-select product
+        self.apply_permissions(self._pending_permissions)
+        self.camera.start()
+        self.hx711.reset()
+        self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
 
         self.firebase.push_event(
             "session_started",
@@ -234,96 +274,6 @@ class MainWindow(QMainWindow):
                 "count_current_session": int(self.hx711.captured_count),
                 "quota_date": self._quota_date_key,
                 "quota_reached": bool(self._quota_reached),
-            },
-        )
-
-    def _build_product_selection_page(self) -> QWidget:
-        page = QWidget()
-        root_layout = QVBoxLayout(page)
-        root_layout.setContentsMargins(40, 30, 40, 30)
-        root_layout.setSpacing(18)
-
-        title = QLabel("Select Product")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 34px; font-weight: 700;")
-
-        subtitle = QLabel("Choose one product before starting the session")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("font-size: 18px;")
-
-        root_layout.addStretch(1)
-        root_layout.addWidget(title)
-        root_layout.addWidget(subtitle)
-        root_layout.addSpacing(10)
-
-        button_row = QHBoxLayout()
-        button_row.setSpacing(16)
-
-        for product_name in self.product_options:
-            btn = QPushButton(product_name)
-            btn.setMinimumHeight(120)
-            btn.setStyleSheet("font-size: 24px; font-weight: 600;")
-            btn.clicked.connect(lambda checked=False, p=product_name: self._on_product_selected(p))
-            button_row.addWidget(btn)
-
-        root_layout.addLayout(button_row)
-        root_layout.addStretch(2)
-        return page
-
-    def _on_product_selected(self, product_name: str):
-        selected = product_name.strip()
-        if not selected:
-            return
-
-        self._selected_product_name = selected
-        self._apply_product_profiles(selected)
-        self._quota_reached = bool(
-            self._user_count_quota is not None and self._daily_count >= int(self._user_count_quota)
-        )
-        self.ui.label_product.setText(self._selected_product_name)
-        self._update_quota_label()
-
-        self.apply_permissions(self._pending_permissions)
-        self.camera.start()
-        self.hx711.reset()
-        if self._quota_reached:
-            self.ui.pushButton_start.setText("Start")
-            self.ui.pushButton_start.setEnabled(False)
-            self.ui.pushButton_start.setToolTip("Daily quota reached")
-        else:
-            self.hx711.start()
-            self.ui.pushButton_start.setText("Stop")
-        # Keep conveyor in safe OFF state until a qualified item triggers RUN.
-        self._ensure_relay_on("product_selected")
-        self.ui.stackedWidget.setCurrentWidget(self.ui.page_main)
-
-        self.firebase.push_event(
-            "product_selected",
-            {
-                "product_name": self._selected_product_name,
-                "username": self.current_user,
-                "role": self.current_role,
-            },
-        )
-        self.firebase.set_state(
-            "current_product",
-            {
-                "product_name": self._selected_product_name,
-                "username": self.current_user,
-                "role": self.current_role,
-            },
-        )
-        self.firebase.set_state(
-            "session_quota",
-            {
-                "username": self.current_user,
-                "role": self.current_role,
-                "count_quota": self._user_count_quota,
-                "count_current": int(self._daily_count),
-                "count_current_session": int(self.hx711.captured_count),
-                "quota_date": self._quota_date_key,
-                "quota_reached": bool(self._quota_reached),
-                "product_name": self._selected_product_name,
             },
         )
 
@@ -373,31 +323,154 @@ class MainWindow(QMainWindow):
     # ─────────────────────────────────────
     #  OCR Product Detection
     # ─────────────────────────────────────
-    def on_product_detected(self, product_name: str):
-        """Called when OCR detects a product name from camera feed."""
-        if self._selected_product_name:
-            return
 
-        self.ui.label_product.setText(product_name)
 
-        normalized = product_name.strip().lower()
-        if normalized and normalized != self._last_product_name:
-            self._last_product_name = normalized
+    def on_barcode_detected(self, barcode_text: str):
+        """Called when barcode is successfully detected from camera feed."""
+        self._last_barcode_text = barcode_text
+        
+        try:
+            # Parse barcode: "SYMBOLOGY:VALUE"
+            parts = barcode_text.split(":")
+            if len(parts) < 2:
+                logger.warning(f"Invalid barcode format: {barcode_text}")
+                return
+            
+            symbology = parts[0].strip().upper()
+            barcode_value = ":".join(parts[1:]).strip()
+            
+            # Ignore CODE93 barcodes
+            if symbology == "CODE93":
+                logger.info(f"Ignoring CODE93 barcode: {barcode_value}")
+                return
+            
+            logger.info(f"Barcode detected: {barcode_text}")
+            
+            # Check if barcode maps to a product
+            if barcode_text in BARCODE_TO_PRODUCT_MAP:
+                product_info = BARCODE_TO_PRODUCT_MAP[barcode_text]
+                product_name = product_info["product_name"]
+                product_quota = product_info["product_quota"]
+                
+                # Auto-select the product and expose its mapped quota in the UI.
+                self._auto_select_product(product_name, product_quota)
+                logger.info(f"Product auto-selected from barcode: {product_name}")
+                print(f"  ║  PRODUCT → {product_name:<27} ║")
+                print(f"  ║  QUOTA   → {product_quota:<27} ║")
+            
+            # Fire the barcode event regardless of product mapping
             self.firebase.push_event(
-                "product_detected",
+                "barcode_detected",
                 {
-                    "product_name": product_name.strip(),
+                    "barcode_text": barcode_text,
+                    "symbology": symbology,
+                    "value": barcode_value,
                     "username": self.current_user,
                     "role": self.current_role,
+                    "timestamp": datetime.now().isoformat(),
                 },
             )
 
-        print(f"\n  ╔═══════════════════════════════════════╗")
-        print(f"  ║  PRODUCT → {product_name:<27} ║")
-        print(f"  ╚═══════════════════════════════════════╝\n")
+            print(f"\n  ╔═══════════════════════════════════════╗")
+            print(f"  ║  BARCODE [{symbology}] → {barcode_value:<18} ║")
+            print(f"  ╚═══════════════════════════════════════╝\n")
+        except Exception as e:
+            logger.error(f"Error handling barcode detection: {e}")
+
+    def _auto_select_product(self, product_name: str, product_quota: int):
+        """Auto-select product when barcode is detected"""
+        if self._selected_product_name and self._selected_product_name != product_name and not self._quota_reached:
+            # Keep the current product until its quota is reached.
+            return
+        
+        self._selected_product_name = product_name
+        self._user_count_quota = product_quota
+        
+        self._ensure_quota_day_context()
+        self._apply_product_profiles(product_name)
+        self._quota_reached = bool(
+            self._user_count_quota is not None and self._daily_count >= int(self._user_count_quota)
+        )
+        
+        self.ui.label_product.setText(self._selected_product_name)
+        self._update_quota_label()
+        
+        if self._quota_reached:
+            self.ui.pushButton_start.setText("Start")
+            self.ui.pushButton_start.setEnabled(False)
+            self.ui.pushButton_start.setToolTip("Daily quota reached")
+        else:
+            self.apply_permissions(self._pending_permissions)
+            self.hx711.start()
+            self.ui.pushButton_start.setText("Stop")
+        
+        # Keep conveyor in safe OFF state until a qualified item triggers RUN.
+        self._ensure_relay_on("barcode_product_selected")
+        
+        self.firebase.push_event(
+            "product_auto_selected",
+            {
+                "product_name": self._selected_product_name,
+                "product_quota": product_quota,
+                "username": self.current_user,
+                "role": self.current_role,
+            },
+        )
+        self.firebase.set_state(
+            "current_product",
+            {
+                "product_name": self._selected_product_name,
+                "username": self.current_user,
+                "role": self.current_role,
+                "source": "barcode_detection",
+            },
+        )
+        self.firebase.set_state(
+            "session_quota",
+            {
+                "username": self.current_user,
+                "role": self.current_role,
+                "count_quota": self._user_count_quota,
+                "count_current": int(self._daily_count),
+                "count_current_session": int(self.hx711.captured_count),
+                "quota_date": self._quota_date_key,
+                "quota_reached": bool(self._quota_reached),
+                "product_name": self._selected_product_name,
+            },
+        )
+
+    def _on_barcode_frame_ready(self, frame_bgr):
+        """Called when a barcode frame is ready for saving"""
+        if self._last_barcode_text:
+            filename = self._save_barcode_frame(frame_bgr, self._last_barcode_text)
+            if filename:
+                logger.info(f"Barcode frame saved: {filename}")
+            self._last_barcode_text = ""  # Clear for next barcode
+
+
+    def _save_barcode_frame(self, frame_bgr, barcode_text: str):
+        """Save frame when barcode is detected"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            barcode_clean = barcode_text.replace(":", "_").replace("/", "_").replace("|", "_")
+            filename = f"barcode_{timestamp}_{barcode_clean}.jpg"
+            
+            test_img_dir = os.path.join(os.path.dirname(__file__), "test_img")
+            os.makedirs(test_img_dir, exist_ok=True)
+            
+            filepath = os.path.join(test_img_dir, filename)
+            cv2.imwrite(filepath, frame_bgr)
+            logger.info(f"Barcode frame saved: {filepath}")
+            return filename
+        except Exception as e:
+            logger.error(f"Error saving barcode frame: {e}")
+            return None
+
 
     def on_weight_finalized(self, weight: float):
         self._ensure_quota_day_context()
+        now_ts = int(datetime.now().timestamp())
+        self._production_shift = self._resolve_current_shift(now_ts)
         accepted = bool(self.hx711.is_weight_accepted(weight))
         product_name = self.ui.label_product.text().strip() or "Unknown"
         standard = self._extract_standard_weight(product_name)
@@ -446,7 +519,7 @@ class MainWindow(QMainWindow):
                 "production_shift": self._production_shift,
                 "production_line": int(self._production_line),
                 "operator": str(self.current_user or ""),
-                "time": int(datetime.now().timestamp()),
+                "time": now_ts,
                 "accepted": bool(accepted),
             }
         )

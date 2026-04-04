@@ -125,7 +125,7 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", u"MainWindow", None))
-        self.label_product.setText(QCoreApplication.translate("MainWindow", u" ", None))
+        self.label_product.setText(QCoreApplication.translate("MainWindow", u"No Product Detected ", None))
         self.label_uptime.setText(QCoreApplication.translate("MainWindow", u" ", None))
         self.label_date.setText(QCoreApplication.translate("MainWindow", u" ", None))
         self.label_product_weight.setText(QCoreApplication.translate("MainWindow", u"Weight: -", None))
